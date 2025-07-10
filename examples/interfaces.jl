@@ -28,6 +28,9 @@ They only need to implement three methods:
 - `DensityInterface.logdensityof(dist, obs)` for inference
 - `StatsAPI.fit!(dist, obs_seq, weight_seq)` for learning
 
+When learning, the one-state marginal $ \gamma_{i,t} = \mathbb{P}(X_t=i | Y_{1:T}) $ will be passed to `StatsAPI.fit!` through the `weight_seq` argument.
+This is analogous to the weights vector accepted by `Distributions.fit_mle`; see [juliastats.org/Distributions.jl/stable/fit/#Maximum-Likelihood-Estimation](https://juliastats.org/Distributions.jl/stable/fit/#Distributions.fit_mle-Tuple%7BAny,%20Any,%20Any%7D)
+
 In addition, the observations can be arbitrary Julia types.
 So let's construct a distribution that generates stuff.
 =#
