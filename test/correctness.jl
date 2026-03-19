@@ -154,7 +154,7 @@ if TEST_SUITE != "HMMBase"
     @testset verbose = true "GaussianGLM - Controlled HMM" begin
         using DensityInterface
         using StatsAPI
-        
+
         mutable struct GLMNormalModel{T}
             β0::T
             β1::T
@@ -244,8 +244,8 @@ if TEST_SUITE != "HMMBase"
             GLMNormalModel(-0.5, 1.0, log(1.0)), GLMNormalModel(0.0, 0.0, log(1.0))
         ]
 
-        hmm_true = ControlledHMM(init, trans, dists)
-        hmm_guess = ControlledHMM(init_guess, trans_guess, dists_guess)
+        hmm_true = ControlledEmissionHMM(init, trans, dists)
+        hmm_guess = ControlledEmissionHMM(init_guess, trans_guess, dists_guess)
 
         Tmin, Tmax = 50, 250
         lens = rand(rng, Tmin:Tmax, K)

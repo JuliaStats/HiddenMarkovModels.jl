@@ -22,7 +22,8 @@ using SparseArrays: AbstractSparseArray, SparseMatrixCSC, nonzeros, nnz, nzrange
 using StatsAPI: StatsAPI, fit, fit!
 using StatsFuns: log2π
 
-export AbstractHMM, HMM, ControlledHMM
+export AbstractHMM, HMM, ControlledEmissionHMM
+export ControlledEmission, ControlledEmissions
 export initialization, transition_matrix, obs_distributions
 export fit!, logdensityof, joint_logdensityof
 export viterbi, forward, forward_backward, baum_welch
