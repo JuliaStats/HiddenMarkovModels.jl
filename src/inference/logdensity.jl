@@ -45,4 +45,3 @@ function joint_logdensityof(
     end
     return logL
 end
-

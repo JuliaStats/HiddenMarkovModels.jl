@@ -8,7 +8,11 @@ the standard `logdensityof(ce, obs)` and `rand(rng, ce)` interface.
 $(TYPEDFIELDS)
 """
 struct ControlledEmission{D,C}
+    "Control-aware emission distribution. Must support the non-standard signatures
+    `logdensityof(dist, obs, control)` and `rand(rng, dist, control)`."
     dist::D
+    "The control value bound to this emission; passed as the third argument to
+    `logdensityof` and `rand`."
     control::C
 end
 
@@ -24,24 +28,39 @@ $(TYPEDEF)
 A lazy vector of [`ControlledEmission`](@ref) wrappers, pairing each distribution in `dists`
 with the same `control` value. No allocation occurs until individual elements are accessed.
 
-This is returned by `obs_distributions(hmm::ControlledEmissionHMM, control)` so that the
+This is returned by `obs_distributions(hmm::ControlledEmissionHMM, control::C)` so that the
 standard `obs_distributions(hmm, control)` contract is satisfied: the returned distributions
 are already bound to `control` and respond to `logdensityof(dist, obs)` and `rand(rng, dist)`.
 
 $(TYPEDFIELDS)
 """
-struct ControlledEmissions{VD,C} <: AbstractVector{ControlledEmission}
+struct ControlledEmissions{D,VD<:AbstractVector{D},C} <:
+       AbstractVector{ControlledEmission{D,C}}
+    "Vector of control-aware emission distributions. Each element must support
+    `logdensityof(dist, obs, control)` and `rand(rng, dist, control)`."
     dists::VD
+    "The control value shared across all emissions; passed to each wrapped distribution."
     control::C
 end
 
 Base.size(ce::ControlledEmissions) = size(ce.dists)
+Base.eltype(::Type{ControlledEmissions{D,VD,C}}) where {D,VD,C} = ControlledEmission{D,C}
 Base.getindex(ce::ControlledEmissions, i::Int) = ControlledEmission(ce.dists[i], ce.control)
 
 """
 $(TYPEDEF)
 
-Implementation of a Controlled HMM where control variables only influence the emission models.
+An [`AbstractHMM`](@ref) where control variables affect only the emission distributions,
+not the transition dynamics. The `init` and `trans` fields are control-independent;
+each element of `dists` must be a control-aware distribution supporting the non-standard
+signatures `logdensityof(dist, obs, control)` and `rand(rng, dist, control)`.
+
+At inference time, `obs_distributions(hmm, control)` returns a lazy
+[`ControlledEmissions`](@ref) vector that binds each raw distribution to `control`,
+exposing the standard `logdensityof(dist, obs)` / `rand(rng, dist)` interface expected
+by the inference algorithms.
+
+`nothing` is not a valid control value; use [`HMM`](@ref) for uncontrolled models.
 
 $(TYPEDFIELDS)
 """
@@ -52,10 +71,16 @@ struct ControlledEmissionHMM{
     Vl<:AbstractVector,
     Ml<:AbstractMatrix,
 } <: AbstractHMM
+    "initial state probabilities"
     init::V
+    "state transition probabilities (control-independent)"
     trans::M
+    "control-aware emission distributions; each element must support
+    `logdensityof(dist, obs, control)` and `rand(rng, dist, control)`"
     dists::VD
+    "logarithms of initial state probabilities"
     loginit::Vl
+    "logarithms of state transition probabilities"
     logtrans::Ml
 
     function ControlledEmissionHMM(
@@ -87,7 +112,33 @@ log_transition_matrix(hmm::ControlledEmissionHMM, ::Nothing) = hmm.logtrans
 # Returns raw meta-distributions (control-aware dist objects), used internally for fitting
 obs_distributions(hmm::ControlledEmissionHMM) = hmm.dists
 
-obs_distributions(hmm::ControlledEmissionHMM, ::Nothing) = hmm.dists
+#= 
+valid_hmm cannot call obs_distributions(hmm, nothing) here because raw dists are
+ control-aware and don't implement the no-control DensityInterface. Only validate
+structural consistency (lengths, init, trans).
+=#
+function valid_hmm(hmm::ControlledEmissionHMM)
+    init = initialization(hmm)
+    trans = transition_matrix(hmm)
+    if !(length(init) == length(hmm.dists) == size(trans, 1) == size(trans, 2))
+        return false
+    elseif !valid_prob_vec(init)
+        return false
+    elseif !valid_trans_mat(trans)
+        return false
+    end
+    return true
+end
+
+# ControlledEmissionHMM always requires a real control value.
+function obs_distributions(hmm::ControlledEmissionHMM, ::Nothing)
+    throw(
+        ArgumentError(
+            "ControlledEmissionHMM requires a control value; `nothing` is not valid."
+        ),
+    )
+end
+
 # Returns a lazy ControlledEmissions vector:
 # each element is bound to `control` and responds to logdensityof(dist, obs) / rand(rng, dist)
 function obs_distributions(hmm::ControlledEmissionHMM, control)
