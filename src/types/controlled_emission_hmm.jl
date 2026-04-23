@@ -146,14 +146,6 @@ function obs_distributions(hmm::ControlledEmissionHMM, control)
 end
 Base.length(hmm::ControlledEmissionHMM) = length(hmm.dists)
 
-function Random.rand(::ControlledEmissionHMM, ::Integer)
-    throw(
-        ArgumentError(
-            "ControlledEmissionHMM requires a control sequence; call rand(hmm, control_seq).",
-        ),
-    )
-end
-
 function StatsAPI.fit!(
     hmm::ControlledEmissionHMM,
     fb_storage::ForwardBackwardStorage,
@@ -212,10 +204,38 @@ function StatsAPI.fit!(
     control_seq=nothing,
     seq_ends::AbstractVectorOrNTuple{Int},
 )
-    control_seq === nothing && throw(
-        ArgumentError(
-            "ControlledEmissionHMM requires control_seq; call fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends=...).",
-        ),
-    )
+    control_seq === nothing &&
+        throw(MethodError(StatsAPI.fit!, (hmm, fb_storage, obs_seq), kwargs))
     return StatsAPI.fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends=seq_ends)
+end
+
+function __init__()
+    Base.Experimental.register_error_hint(MethodError) do io, exc, argtypes, kwargs
+        if exc.f === rand &&
+            length(argtypes) == 2 &&
+            argtypes[1] <: ControlledEmissionHMM &&
+            argtypes[2] <: Integer &&
+            isempty(kwargs)
+
+            print(
+                io,
+                "\nHint: `ControlledEmissionHMM` requires a control sequence. " *
+                "Call `rand(hmm, control_seq)` instead.",
+            )
+
+        elseif exc.f === StatsAPI.fit! &&
+            length(argtypes) == 3 &&
+            argtypes[1] <: ControlledEmissionHMM &&
+            argtypes[2] <: ForwardBackwardStorage &&
+            argtypes[3] <: AbstractVector &&
+            haskey(kwargs, :seq_ends) &&
+            !haskey(kwargs, :control_seq)
+
+            print(
+                io,
+                "\nHint: `ControlledEmissionHMM` requires `control_seq`. " *
+                "Call `fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends=...)` instead.",
+            )
+        end
+    end
 end
