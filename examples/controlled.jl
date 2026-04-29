@@ -4,6 +4,7 @@
 Here, we give a example of controlled HMM (also called input-output HMM), in the special case of Markov switching regression.
 =#
 
+using DensityInterface
 using Distributions
 using HiddenMarkovModels
 import HiddenMarkovModels as HMMs
@@ -146,6 +147,103 @@ hcat(hmm_est.dist_coeffs[1], hmm.dist_coeffs[1])
 #-
 
 hcat(hmm_est.dist_coeffs[2], hmm.dist_coeffs[2])
+
+# ## Built-in `ControlledEmissionHMM`
+
+#=
+The pattern above defines a custom `AbstractHMM` subtype, which is the right tool when controls influence the transition matrix or the initial distribution.
+
+When **only the emissions depend on the control**, the package ships [`ControlledEmissionHMM`](@ref) so you don't have to write the boilerplate. `init` and `trans` are stored as plain control-independent vectors and matrices, and you only have to provide a control-aware emission distribution per state.
+=#
+
+# ### Defining a control-aware emission
+
+#=
+Each emission `d` must implement three "non-standard" three-argument methods:
+
+- `DensityInterface.logdensityof(d, obs, control)` — for inference
+- `Random.rand(rng, d, control)` — for sampling
+- `StatsAPI.fit!(d, obs_seq, control_seq, weights)` — for learning
+
+At inference time, `obs_distributions(hmm, control)` wraps each raw distribution into a [`ControlledEmission`](@ref) bound to `control`, so the inner inference loops keep using the standard two-argument `logdensityof(dist, obs)` / `rand(rng, dist)` interface.
+
+To mirror the example above, we define a Gaussian whose mean is linear in a scalar control:
+=#
+
+mutable struct LinearGaussian{T}
+    β0::T
+    β1::T
+    logσ::T
+end
+
+DensityInterface.DensityKind(::LinearGaussian) = HasDensity()
+
+function DensityInterface.logdensityof(d::LinearGaussian, obs::Real, control::Real)
+    μ = d.β0 + d.β1 * control
+    σ = exp(d.logσ)
+    return - log(2π) / 2 - d.logσ - ((obs - μ) / σ)^2 / 2
+end
+
+function Random.rand(rng::AbstractRNG, d::LinearGaussian, control::Real)
+    μ = d.β0 + d.β1 * control
+    σ = exp(d.logσ)
+    return μ + σ * randn(rng)
+end
+
+function StatsAPI.fit!(
+    d::LinearGaussian,
+    obs_seq::AbstractVector{<:Real},
+    control_seq::AbstractVector{<:Real},
+    weights::AbstractVector{<:Real},
+)
+    S0 = sum(weights)
+    S1 = sum(weights .* control_seq)
+    S2 = sum(weights .* control_seq .^ 2)
+    T0 = sum(weights .* obs_seq)
+    T1 = sum(weights .* control_seq .* obs_seq)
+    Δ = S0 * S2 - S1^2
+    d.β0 = (T0 * S2 - T1 * S1) / Δ
+    d.β1 = (T1 * S0 - T0 * S1) / Δ
+    sse = sum(weights .* (obs_seq .- (d.β0 .+ d.β1 .* control_seq)) .^ 2)
+    d.logσ = log(sqrt(sse / S0))
+    return d
+end
+
+# ### Building the HMM
+
+#=
+Construction takes the standard parameters plus the vector of control-aware emissions — no `AbstractHMM` subtype needed.
+=#
+
+dists_lg = [LinearGaussian(-1.0, 2.0, log(0.5)), LinearGaussian(0.0, -1.0, log(1.0))]
+hmm_lg = ControlledEmissionHMM(init, trans, dists_lg);
+
+# ### Simulation
+
+#=
+A `ControlledEmissionHMM` always requires a concrete control sequence: calling `rand(hmm, T::Integer)` is not supported, since there is no sensible default control. Provide a `control_seq` of the desired length instead.
+=#
+
+control_seq_lg = randn(rng, 2000);
+obs_seq_lg = rand(rng, hmm_lg, control_seq_lg).obs_seq;
+
+# ### Inference and learning
+
+#=
+Inference works exactly as with any other `AbstractHMM`:
+=#
+
+best_state_seq_lg, _ = viterbi(hmm_lg, obs_seq_lg, control_seq_lg)
+
+#=
+For learning, `ControlledEmissionHMM` ships its own `fit!` method that re-estimates `init` and `trans` in the standard way and then calls your distribution's `fit!(d, obs_seq, control_seq, weights)` for each state — so there is nothing to override on the HMM itself.
+=#
+
+dists_lg_guess = [LinearGaussian(-0.5, 1.0, log(1.0)), LinearGaussian(0.0, 0.0, log(1.0))]
+hmm_lg_guess = ControlledEmissionHMM(init_guess, trans_guess, dists_lg_guess)
+
+hmm_lg_est, ll_lg = baum_welch(hmm_lg_guess, obs_seq_lg, control_seq_lg)
+first(ll_lg), last(ll_lg)
 
 # ## Tests  #src
 

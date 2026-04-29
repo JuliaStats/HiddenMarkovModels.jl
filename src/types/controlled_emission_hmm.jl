@@ -114,7 +114,7 @@ obs_distributions(hmm::ControlledEmissionHMM) = hmm.dists
 
 #= 
 valid_hmm cannot call obs_distributions(hmm, nothing) here because raw dists are
- control-aware and don't implement the no-control DensityInterface. Only validate
+control-aware and don't implement the no-control DensityInterface. Only validate
 structural consistency (lengths, init, trans).
 =#
 function valid_hmm(hmm::ControlledEmissionHMM)
@@ -130,7 +130,9 @@ function valid_hmm(hmm::ControlledEmissionHMM)
     return true
 end
 
-# ControlledEmissionHMM always requires a real control value.
+#=
+ControlledEmissionHMM always requires a real control value. This error is needed for dispatch i.e., otherwise there is a method ambiguity.
+=#
 function obs_distributions(hmm::ControlledEmissionHMM, ::Nothing)
     throw(
         ArgumentError(
@@ -197,26 +199,33 @@ function StatsAPI.fit!(
     return nothing
 end
 
-function StatsAPI.fit!(
-    hmm::ControlledEmissionHMM,
-    fb_storage::ForwardBackwardStorage,
-    obs_seq::AbstractVector;
-    control_seq=nothing,
-    seq_ends::AbstractVectorOrNTuple{Int},
-)
-    control_seq === nothing &&
-        throw(MethodError(StatsAPI.fit!, (hmm, fb_storage, obs_seq), kwargs))
-    return StatsAPI.fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends=seq_ends)
+#=
+`ControlledEmissionHMM` requires a control sequence: surface a `MethodError`
+(instead of a downstream `ArgumentError`) so the hint registers in `__init__` fires.
+=#
+function Random.rand(rng::AbstractRNG, hmm::ControlledEmissionHMM, T::Integer)
+    throw(MethodError(rand, (rng, hmm, T)))
+end
+function Random.rand(hmm::ControlledEmissionHMM, T::Integer)
+    throw(MethodError(rand, (hmm, T)))
 end
 
 function __init__()
     Base.Experimental.register_error_hint(MethodError) do io, exc, argtypes, kwargs
         if exc.f === rand &&
-            length(argtypes) == 2 &&
-            argtypes[1] <: ControlledEmissionHMM &&
-            argtypes[2] <: Integer &&
-            isempty(kwargs)
-
+            isempty(kwargs) &&
+            (
+                (
+                    length(argtypes) == 2 &&
+                    argtypes[1] <: ControlledEmissionHMM &&
+                    argtypes[2] <: Integer
+                ) || (
+                    length(argtypes) == 3 &&
+                    argtypes[1] <: AbstractRNG &&
+                    argtypes[2] <: ControlledEmissionHMM &&
+                    argtypes[3] <: Integer
+                )
+            )
             print(
                 io,
                 "\nHint: `ControlledEmissionHMM` requires a control sequence. " *
@@ -230,7 +239,6 @@ function __init__()
             argtypes[3] <: AbstractVector &&
             haskey(kwargs, :seq_ends) &&
             !haskey(kwargs, :control_seq)
-
             print(
                 io,
                 "\nHint: `ControlledEmissionHMM` requires `control_seq`. " *
