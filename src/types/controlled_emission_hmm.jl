@@ -215,7 +215,8 @@ function _methoderror_haskw(kwargs, name::Symbol)
         return haskey(kwargs, name)
     end
     return any(kwargs) do kw
-        kw === name || (kw isa Pair && first(kw) === name) ||
+        kw === name ||
+            (kw isa Pair && first(kw) === name) ||
             (kw isa Tuple && !isempty(kw) && first(kw) === name)
     end
 end
