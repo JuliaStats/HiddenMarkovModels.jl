@@ -210,6 +210,16 @@ function Random.rand(hmm::ControlledEmissionHMM, T::Integer)
     throw(MethodError(rand, (hmm, T)))
 end
 
+function _methoderror_haskw(kwargs, name::Symbol)
+    if kwargs isa NamedTuple || kwargs isa Base.Pairs
+        return haskey(kwargs, name)
+    end
+    return any(kwargs) do kw
+        kw === name || (kw isa Pair && first(kw) === name) ||
+            (kw isa Tuple && !isempty(kw) && first(kw) === name)
+    end
+end
+
 function __init__()
     Base.Experimental.register_error_hint(MethodError) do io, exc, argtypes, kwargs
         if exc.f === rand &&
@@ -237,8 +247,8 @@ function __init__()
             argtypes[1] <: ControlledEmissionHMM &&
             argtypes[2] <: ForwardBackwardStorage &&
             argtypes[3] <: AbstractVector &&
-            haskey(kwargs, :seq_ends) &&
-            !haskey(kwargs, :control_seq)
+            _methoderror_haskw(kwargs, :seq_ends) &&
+            !_methoderror_haskw(kwargs, :control_seq)
             print(
                 io,
                 "\nHint: `ControlledEmissionHMM` requires `control_seq`. " *
