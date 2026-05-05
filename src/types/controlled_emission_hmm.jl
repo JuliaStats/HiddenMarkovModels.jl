@@ -109,10 +109,7 @@ transition_matrix(hmm::ControlledEmissionHMM, ::Nothing) = hmm.trans
 log_transition_matrix(hmm::ControlledEmissionHMM, ::Any) = hmm.logtrans
 log_transition_matrix(hmm::ControlledEmissionHMM, ::Nothing) = hmm.logtrans
 
-# Returns raw meta-distributions (control-aware dist objects), used internally for fitting
-obs_distributions(hmm::ControlledEmissionHMM) = hmm.dists
-
-#= 
+#=
 valid_hmm cannot call obs_distributions(hmm, nothing) here because raw dists are
 control-aware and don't implement the no-control DensityInterface. Only validate
 structural consistency (lengths, init, trans).

@@ -46,7 +46,6 @@ end
     @test transition_matrix(hmm, nothing) === trans
     @test HMMs.log_transition_matrix(hmm, 1.0) === hmm.logtrans
     @test HMMs.log_transition_matrix(hmm, nothing) === hmm.logtrans
-    @test obs_distributions(hmm) === dists
 
     controlled_dists = obs_distributions(hmm, 2.0)
     @test controlled_dists isa ControlledEmissions
