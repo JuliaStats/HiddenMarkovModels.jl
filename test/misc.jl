@@ -83,3 +83,35 @@ end
     @test occursin("requires `control_seq`", sprint(showerror, err))
     @test occursin("fit!(hmm, fb_storage, obs_seq, control_seq", sprint(showerror, err))
 end
+
+@testset "ControlledEmission DensityKind and ControlledEmissions eltype" begin
+    dist = TestControlledEmissionDist()
+    ce = ControlledEmission(dist, 1.5)
+    @test DensityInterface.DensityKind(ce) === DensityInterface.HasDensity()
+
+    dists = [TestControlledEmissionDist(), TestControlledEmissionDist()]
+    ces = ControlledEmissions(dists, 2.5)
+    @test eltype(ces) === ControlledEmission{TestControlledEmissionDist,Float64}
+    @test eltype(typeof(ces)) === ControlledEmission{TestControlledEmissionDist,Float64}
+end
+
+@testset "ControlledEmissionHMM constructor rejects invalid inputs" begin
+    dists2 = [TestControlledEmissionDist(), TestControlledEmissionDist()]
+    dists3 = [
+        TestControlledEmissionDist(),
+        TestControlledEmissionDist(),
+        TestControlledEmissionDist(),
+    ]
+    valid_init = [0.4, 0.6]
+    valid_trans = [0.7 0.3; 0.2 0.8]
+
+    # length mismatch between dists and init/trans dimensions
+    @test_throws ArgumentError ControlledEmissionHMM(valid_init, valid_trans, dists3)
+
+    # invalid initial probability vector (does not sum to 1)
+    @test_throws ArgumentError ControlledEmissionHMM([0.3, 0.6], valid_trans, dists2)
+
+    # invalid transition matrix (rows do not sum to 1)
+    bad_trans = [0.5 0.3; 0.2 0.8]
+    @test_throws ArgumentError ControlledEmissionHMM(valid_init, bad_trans, dists2)
+end
