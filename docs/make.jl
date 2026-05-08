@@ -3,10 +3,10 @@ using DocumenterCitations
 using HiddenMarkovModels
 using Literate
 
-bib = CitationBibliography(joinpath(@__DIR__, "src", "refs.bib"); style = :authoryear)
+bib = CitationBibliography(joinpath(@__DIR__, "src", "refs.bib"); style=:authoryear)
 
 DocMeta.setdocmeta!(
-    HiddenMarkovModels, :DocTestSetup, :(using HiddenMarkovModels); recursive = true
+    HiddenMarkovModels, :DocTestSetup, :(using HiddenMarkovModels); recursive=true
 )
 
 open(joinpath(joinpath(@__DIR__, "src"), "index.md"), "w") do io
@@ -58,20 +58,20 @@ pages = [
 ]
 
 fmt = Documenter.HTML(;
-    prettyurls = get(ENV, "CI", "false") == "true",
-    repolink = "https://github.com/JuliaStats/HiddenMarkovModels.jl",
-    canonical = "https://JuliaStats.github.io/HiddenMarkovModels.jl",
-    assets = String[],
+    prettyurls=get(ENV, "CI", "false") == "true",
+    repolink="https://github.com/JuliaStats/HiddenMarkovModels.jl",
+    canonical="https://JuliaStats.github.io/HiddenMarkovModels.jl",
+    assets=String[],
 )
 
 makedocs(;
-    modules = [HiddenMarkovModels],
-    authors = "Guillaume Dalle",
-    sitename = "HiddenMarkovModels.jl",
-    format = fmt,
-    pages = pages,
-    plugins = [bib],
-    pagesonly = true,
+    modules=[HiddenMarkovModels],
+    authors="Guillaume Dalle",
+    sitename="HiddenMarkovModels.jl",
+    format=fmt,
+    pages=pages,
+    plugins=[bib],
+    pagesonly=true,
 )
 
-deploydocs(; repo = "github.com/JuliaStats/HiddenMarkovModels.jl", devbranch = "main")
+deploydocs(; repo="github.com/JuliaStats/HiddenMarkovModels.jl", devbranch="main")
