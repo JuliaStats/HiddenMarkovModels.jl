@@ -1,7 +1,7 @@
 # # Time dependency
 
 #=
-Here, we demonstrate what to do transition and observation laws depend on the current time.
+Here, we demonstrate what to do when transition and observation laws depend on the current time.
 This time-dependent HMM is implemented as a particular case of controlled HMM.
 =#
 
