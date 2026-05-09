@@ -3,7 +3,7 @@
 To re-run the experiments from the JOSS paper, clone the repository:
 
 ```bash
-git clone https://github.com/gdalle/HiddenMarkovModels.jl
+git clone https://github.com/JuliaStats/HiddenMarkovModels.jl
 cd HiddenMarkovModels.jl
 ```
 
