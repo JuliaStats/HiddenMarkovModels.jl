@@ -1,6 +1,6 @@
 # # Gradient Descent in HMMs
 
-#= 
+#=
 In this tutorial we explore two ways to use gradient descent when fitting HMMs:
 
 1. Fitting parameters of an observation model that do not have closed-form updates
@@ -26,7 +26,7 @@ using Test #src
 
 rng = StableRNG(42)
 
-#= 
+#=
 For both parts of this tutorial we use a simple HMM with Gaussian observations.
 Using gradient-based optimization here is overkill, but it keeps the tutorial
 simple while illustrating the relevant methods.
@@ -42,7 +42,7 @@ end
 model_mean(mod::NormalModel) = mod.μ
 stddev(mod::NormalModel) = exp(mod.logσ)
 
-#= 
+#=
 We have defined a simple probability model with two parameters: the mean and the
 log of the standard deviation. Using `logσ` is intentional so we can optimize over
 all real numbers without worrying about the positivity constraint on `σ`.
@@ -62,7 +62,7 @@ function Random.rand(rng::AbstractRNG, mod::NormalModel{T}) where {T}
     return stddev(mod) * randn(rng, T) + model_mean(mod)
 end
 
-#= 
+#=
 Because we are fitting a Gaussian (and the variance can collapse to ~0), we add
 weak priors to regularize the parameters. We use:
 - A weak Normal prior on `μ`
@@ -114,7 +114,7 @@ function StatsAPI.fit!(
     return mod
 end
 
-#= 
+#=
 Now that we have fully defined our observation model, we can create an HMM using it.
 =#
 
@@ -131,14 +131,14 @@ obs_dists = [
 
 hmm_true = HMM(init_dist, init_trans, obs_dists)
 
-#= 
+#=
 We can now generate data from this HMM.
 Note: `rand(rng, hmm, T)` returns `(state_seq, obs_seq)`.
 =#
 
 state_seq, obs_seq = rand(rng, hmm_true, 10_000)
 
-#= 
+#=
 Next we fit a new HMM to this data. Baum–Welch will perform EM updates for the
 HMM parameters; during the M-step, our observation model parameters are fit via
 gradient-based optimization (BFGS).
@@ -159,7 +159,7 @@ hmm_guess = HMM(init_dist_guess, init_trans_guess, obs_dist_guess)
 
 hmm_est, lls = baum_welch(hmm_guess, obs_seq)
 
-#= 
+#=
 Great! We were able to fit the model using gradient descent inside EM.
 
 Now we will fit the entire HMM using gradient-based optimization by leveraging
@@ -235,7 +235,7 @@ obj(x) = negloglik_from_θ(ComponentVector(x, ax), obs_seq)
 result = Optim.optimize(obj, Vector(θ0), BFGS(); autodiff=AutoForwardDiff())
 hmm_est2 = unpack_to_hmm(ComponentVector(result.minimizer, ax))
 
-#= 
+#=
 We have now trained an HMM using gradient-based optimization over *all* parameters!
 =#
 

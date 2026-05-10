@@ -14,7 +14,7 @@ open(joinpath(joinpath(@__DIR__, "src"), "index.md"), "w") do io
         io,
         """
         ```@meta
-        EditURL = "https://github.com/gdalle/HiddenMarkovModels.jl/blob/main/README.md"
+        EditURL = "https://github.com/JuliaStats/HiddenMarkovModels.jl/blob/main/README.md"
         ```
         """,
     )
@@ -59,8 +59,8 @@ pages = [
 
 fmt = Documenter.HTML(;
     prettyurls=get(ENV, "CI", "false") == "true",
-    repolink="https://github.com/gdalle/HiddenMarkovModels.jl",
-    canonical="https://gdalle.github.io/HiddenMarkovModels.jl",
+    repolink="https://github.com/JuliaStats/HiddenMarkovModels.jl",
+    canonical="https://JuliaStats.github.io/HiddenMarkovModels.jl",
     assets=String[],
 )
 
@@ -74,4 +74,4 @@ makedocs(;
     pagesonly=true,
 )
 
-deploydocs(; repo="github.com/gdalle/HiddenMarkovModels.jl", devbranch="main")
+deploydocs(; repo="github.com/JuliaStats/HiddenMarkovModels.jl", devbranch="main")

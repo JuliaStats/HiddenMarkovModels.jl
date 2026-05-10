@@ -26,13 +26,28 @@ function baum_welch!(
     atol::Real,
     max_iterations::Integer,
     loglikelihood_increasing::Bool,
+    progress::Bool=false,
 )
-    for _ in 1:max_iterations
-        forward_backward!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
-        push!(logL_evolution, logdensityof(hmm) + sum(fb_storage.logL))
-        fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends)
-        if baum_welch_has_converged(logL_evolution; atol, loglikelihood_increasing)
-            break
+    if progress
+        @withprogress name = "Baum-Welch" begin
+            for iter in 1:max_iterations
+                forward_backward!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
+                push!(logL_evolution, logdensityof(hmm) + sum(fb_storage.logL))
+                fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends)
+                @logprogress iter / max_iterations
+                if baum_welch_has_converged(logL_evolution; atol, loglikelihood_increasing)
+                    break
+                end
+            end
+        end
+    else
+        for _ in 1:max_iterations
+            forward_backward!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
+            push!(logL_evolution, logdensityof(hmm) + sum(fb_storage.logL))
+            fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends)
+            if baum_welch_has_converged(logL_evolution; atol, loglikelihood_increasing)
+                break
+            end
         end
     end
     return nothing
@@ -50,6 +65,7 @@ Return a tuple `(hmm_est, loglikelihood_evolution)` where `hmm_est` is the estim
 - `atol`: minimum loglikelihood increase at an iteration of the algorithm (otherwise the algorithm is deemed to have converged)
 - `max_iterations`: maximum number of iterations of the algorithm
 - `loglikelihood_increasing`: whether to throw an error if the loglikelihood decreases
+- `progress`: whether to emit progress log records (rendered as a bar in REPL with `TerminalLoggers`, natively in Pluto, Jupyter and VS Code); off by default to keep the loop allocation-free
 """
 function baum_welch(
     hmm_guess::AbstractHMM,
@@ -59,6 +75,7 @@ function baum_welch(
     atol=1e-5,
     max_iterations=100,
     loglikelihood_increasing=true,
+    progress::Bool=false,
 )
     hmm = deepcopy(hmm_guess)
     fb_storage = initialize_forward_backward(hmm, obs_seq, control_seq; seq_ends)
@@ -74,6 +91,7 @@ function baum_welch(
         atol,
         max_iterations,
         loglikelihood_increasing,
+        progress,
     )
     return hmm, logL_evolution
 end
