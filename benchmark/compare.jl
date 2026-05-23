@@ -23,8 +23,11 @@ target = BenchmarkTools.load(target_path)[1]
 
 j = judge(minimum(target), minimum(baseline))
 
-@printf("Comparison (estimator = minimum)\n  baseline: %s\n  target:   %s\n\n",
-    baseline_path, target_path)
+@printf(
+    "Comparison (estimator = minimum)\n  baseline: %s\n  target:   %s\n\n",
+    baseline_path,
+    target_path
+)
 show(stdout, MIME"text/plain"(), j)
 println()
 

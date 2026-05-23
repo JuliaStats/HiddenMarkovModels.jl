@@ -28,8 +28,8 @@ function build_benchmarkables(
     params::Params,
     data::AbstractArray{<:Real,3},
     algos::Vector{String};
-    samples::Int=100,
-    seconds::Real=10.0,
+    samples::Int=50,
+    seconds::Real=5.0,
 )
     (; obs_dim, seq_length, nb_seqs, bw_iter) = instance
     hmm = build_model(implem, instance, params)
@@ -47,16 +47,15 @@ function build_benchmarkables(
     set! = b -> _set_params!(b; samples=samples, seconds=seconds)
 
     allocating = (
-        ("forward", forward),
-        ("viterbi", viterbi),
-        ("forward_backward", forward_backward),
+        ("forward", forward), ("viterbi", viterbi), ("forward_backward", forward_backward)
     )
     for (name, fn) in allocating
         if name in algos
-            benchs[name] = set!(@benchmarkable(
-                $fn($hmm, $obs_seq, $control_seq; seq_ends=$seq_ends),
-                evals = 1,
-            ))
+            benchs[name] = set!(
+                @benchmarkable(
+                    $fn($hmm, $obs_seq, $control_seq; seq_ends=($seq_ends)), evals = 1,
+                )
+            )
         end
     end
 
@@ -67,53 +66,59 @@ function build_benchmarkables(
     )
     for (name, fn, init) in inplace
         if name in algos
-            benchs[name] = set!(@benchmarkable(
-                $fn(storage, $hmm, $obs_seq, $control_seq; seq_ends=$seq_ends),
-                evals = 1,
-                setup = (
-                    storage = $init($hmm, $obs_seq, $control_seq; seq_ends=$seq_ends)
+            benchs[name] = set!(
+                @benchmarkable(
+                    $fn(storage, $hmm, $obs_seq, $control_seq; seq_ends=($seq_ends)),
+                    evals = 1,
+                    setup = (
+                        storage = $init($hmm, $obs_seq, $control_seq; seq_ends=($seq_ends))
+                    )
                 )
-            ))
+            )
         end
     end
 
     if "baum_welch" in algos
-        benchs["baum_welch"] = set!(@benchmarkable(
-            baum_welch(
-                $hmm,
-                $obs_seq,
-                $control_seq;
-                seq_ends=$seq_ends,
-                max_iterations=$bw_iter,
-                atol=-Inf,
-                loglikelihood_increasing=false,
-            ),
-            evals = 1,
-        ))
+        benchs["baum_welch"] = set!(
+            @benchmarkable(
+                baum_welch(
+                    $hmm,
+                    $obs_seq,
+                    $control_seq;
+                    seq_ends=($seq_ends),
+                    max_iterations=($bw_iter),
+                    atol=(-Inf),
+                    loglikelihood_increasing=false,
+                ),
+                evals = 1,
+            )
+        )
     end
     if "baum_welch!" in algos
-        benchs["baum_welch!"] = set!(@benchmarkable(
-            baum_welch!(
-                fb_storage,
-                logL_evolution,
-                hmm_guess,
-                $obs_seq,
-                $control_seq;
-                seq_ends=$seq_ends,
-                max_iterations=$bw_iter,
-                atol=-Inf,
-                loglikelihood_increasing=false,
-            ),
-            evals = 1,
-            setup = (
-                hmm_guess = build_model($implem, $instance, $params);
-                fb_storage = initialize_forward_backward(
-                    hmm_guess, $obs_seq, $control_seq; seq_ends=$seq_ends
-                );
-                logL_evolution = Float64[];
-                sizehint!(logL_evolution, $bw_iter)
+        benchs["baum_welch!"] = set!(
+            @benchmarkable(
+                baum_welch!(
+                    fb_storage,
+                    logL_evolution,
+                    hmm_guess,
+                    $obs_seq,
+                    $control_seq;
+                    seq_ends=($seq_ends),
+                    max_iterations=($bw_iter),
+                    atol=(-Inf),
+                    loglikelihood_increasing=false,
+                ),
+                evals = 1,
+                setup = (
+                    hmm_guess=build_model($implem, $instance, $params);
+                    fb_storage=initialize_forward_backward(
+                        hmm_guess, $obs_seq, $control_seq; seq_ends=($seq_ends)
+                    );
+                    logL_evolution=Float64[];
+                    sizehint!(logL_evolution, $bw_iter)
+                )
             )
-        ))
+        )
     end
 
     return benchs

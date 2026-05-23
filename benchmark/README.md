@@ -44,18 +44,6 @@ prints regressions / improvements per `(instance, algorithm)`. Run both
 measurements on the same machine, with the same thread count, and ideally with
 nothing else competing for CPU.
 
-## Tuning runtime vs. precision
-
-Each benchmark uses `evals=1` (every algorithm here has non-trivial per-call
-cost) and a `samples` / `seconds` budget. The defaults in
-[hiddenmarkovmodels.jl](../libs/HMMBenchmark/src/hiddenmarkovmodels.jl)
-(`samples=100, seconds=10`) trade roughly 5–10 minutes of wall time for
-substantially less noise than the previous `samples=20` cap, which mattered
-mostly for the small-state benchmarks where individual calls are microseconds.
-
-To make a run faster (e.g. for a quick local sanity check) lower these by
-calling `build_benchmarkables` directly in `benchmarks.jl`:
-
 ```julia
 SUITE = define_suite(rng; instances, algos)
 # or, with explicit budget per benchmark:
@@ -64,7 +52,7 @@ for instance in instances
     data = build_data(rng, instance)
     benchs = build_benchmarkables(
         HiddenMarkovModelsImplem(), instance, params, data, algos;
-        samples=20, seconds=2,
+        samples=200, seconds=20,
     )
     # ... assign into SUITE
 end
