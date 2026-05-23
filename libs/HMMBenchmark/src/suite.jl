@@ -49,9 +49,7 @@ function parse_results(
     end
 
     if !isnothing(path)
-        open(path, "w") do file
-            CSV.write(file, data)
-        end
+        CSV.write(path, data)
     end
     return data
 end
