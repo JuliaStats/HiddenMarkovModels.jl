@@ -76,4 +76,8 @@ end
     @testset verbose = true "Miscellaneous" begin
         include("misc.jl")
     end
+
+    @testset verbose = true "HSMM" begin
+        include("hsmm.jl")
+    end
 end
