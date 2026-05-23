@@ -16,6 +16,22 @@ end
 """
 $(SIGNATURES)
 
+Run the segment-based forward algorithm to compute the loglikelihood of `obs_seq` for `hsmm`, integrating over all possible state and sojourn sequences.
+"""
+function DensityInterface.logdensityof(
+    hsmm::AbstractHSMM,
+    obs_seq::AbstractVector,
+    control_seq::AbstractVector=Fill(nothing, length(obs_seq));
+    seq_ends::AbstractVectorOrNTuple{Int}=(length(obs_seq),),
+    max_duration::Int=50,
+)
+    _, logL = forward(hsmm, obs_seq, control_seq; seq_ends, max_duration)
+    return sum(logL)
+end
+
+"""
+$(SIGNATURES)
+
 Run the forward algorithm to compute the the joint loglikelihood of `obs_seq` and `state_seq` for `hmm`.
 """
 function joint_logdensityof(

@@ -26,6 +26,8 @@ seq_ends = cumsum(length.(obs_seqs))
 ```@docs
 AbstractHMM
 HMM
+AbstractHSMM
+HSMM
 ```
 
 ## Interface
@@ -34,6 +36,18 @@ HMM
 initialization
 transition_matrix
 obs_distributions
+duration_distributions
+```
+
+## Duration distributions
+
+The per-state sojourn distributions used by [`HSMM`](@ref) live on the positive integers `{1, 2, 3, ...}` and form their own small type hierarchy. They are decoupled from `Distributions.jl` so an HSMM does not require it as a dependency.
+
+```@docs
+AbstractDurationDistribution
+GeometricDuration
+PoissonDuration
+NegBinomialDuration
 ```
 
 ## Utils
@@ -55,6 +69,8 @@ viterbi
 forward_backward
 ```
 
+The same five entry points dispatch on [`AbstractHSMM`](@ref), routing to segment-based dynamic programming that accounts for sojourn-time distributions.
+
 ## Learning
 
 ```@docs
@@ -70,6 +86,8 @@ fit!
 HiddenMarkovModels.ForwardStorage
 HiddenMarkovModels.initialize_forward
 HiddenMarkovModels.forward!
+HiddenMarkovModels.HSMMForwardStorage
+HiddenMarkovModels.initialize_hsmm_forward
 ```
 
 ### Viterbi
@@ -78,6 +96,8 @@ HiddenMarkovModels.forward!
 HiddenMarkovModels.ViterbiStorage
 HiddenMarkovModels.initialize_viterbi
 HiddenMarkovModels.viterbi!
+HiddenMarkovModels.HSMMViterbiStorage
+HiddenMarkovModels.initialize_hsmm_viterbi
 ```
 
 ### Forward-backward
@@ -86,6 +106,8 @@ HiddenMarkovModels.viterbi!
 HiddenMarkovModels.ForwardBackwardStorage
 HiddenMarkovModels.initialize_forward_backward
 HiddenMarkovModels.forward_backward!
+HiddenMarkovModels.HSMMForwardBackwardStorage
+HiddenMarkovModels.initialize_hsmm_forward_backward
 ```
 
 ### Baum-Welch
@@ -94,10 +116,13 @@ HiddenMarkovModels.forward_backward!
 HiddenMarkovModels.baum_welch!
 ```
 
+For an `AbstractHSMM`, `forward!`, `viterbi!`, `forward_backward!`, and `baum_welch!` dispatch on the corresponding HSMM storage types listed above.
+
 ## Miscellaneous
 
 ```@docs
 HiddenMarkovModels.valid_hmm
+HiddenMarkovModels.valid_hsmm
 HiddenMarkovModels.rand_prob_vec
 HiddenMarkovModels.rand_trans_mat
 HiddenMarkovModels.fit_in_sequence!
