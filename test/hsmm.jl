@@ -539,3 +539,154 @@ end
         end
     end
 end
+
+## joint_logdensityof
+
+@testset "joint_logdensityof (HSMM)" begin
+    @testset "Hand-computed 2-state, 5-step example" begin
+        # State sequence [1,1,2,1,1] decomposes into sojourns (state 1, d=2), (state 2, d=1),
+        # (state 1, d=2). Hand-compute the joint logL and compare.
+        init = [1.0, 0.0]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Normal(0.0, 1.0), Normal(10.0, 1.0)]
+        durations = [PoissonDuration(2.0), PoissonDuration(1.0)]
+        hsmm = HSMM(init, trans, dists, durations)
+        obs = [0.1, -0.1, 10.05, 0.2, -0.2]
+        state = [1, 1, 2, 1, 1]
+
+        # Manually compose the expected pieces.
+        expected = log(1.0)  # log π[1]
+        # Sojourn 1: state 1, d=2
+        expected += logdensityof(durations[1], 2)
+        # Transition 1 -> 2
+        expected += log(1.0)
+        # Sojourn 2: state 2, d=1
+        expected += logdensityof(durations[2], 1)
+        # Transition 2 -> 1
+        expected += log(1.0)
+        # Sojourn 3: state 1, d=2
+        expected += logdensityof(durations[1], 2)
+        # Observations
+        for t in 1:5
+            expected += logpdf(dists[state[t]], obs[t])
+        end
+
+        @test joint_logdensityof(hsmm, obs, state) ≈ expected
+    end
+
+    @testset "joint_logdensityof ≤ logdensityof on Viterbi path" begin
+        # For any state sequence q, P(Y, q) ≤ P(Y); equality only when q dominates the
+        # posterior. Viterbi gives the q that maximises joint logL, so its joint logL
+        # should be ≤ the marginal logdensityof (which sums over all paths).
+        hsmm = HSMM(
+            [0.5, 0.5], [0.0 1.0; 1.0 0.0],
+            [Normal(-2.0, 1.0), Normal(2.0, 1.0)],
+            [PoissonDuration(3.0), PoissonDuration(3.0)],
+        )
+        rng = MersenneTwister(11)
+        sim = rand(rng, hsmm, 200)
+        q, _ = viterbi(hsmm, sim.obs_seq)
+        joint_q = joint_logdensityof(hsmm, sim.obs_seq, q)
+        marginal = logdensityof(hsmm, sim.obs_seq)
+        @test isfinite(joint_q)
+        @test joint_q <= marginal + 1e-8
+    end
+
+    @testset "joint_logdensityof returns -Inf on illegal self-transition" begin
+        # State sequence with an apparent transition 1->1 isn't representable in an HSMM
+        # (zero-diagonal transition matrix); the joint should be -Inf.
+        hsmm = HSMM(
+            [0.5, 0.5], [0.0 1.0; 1.0 0.0],
+            [Normal(-2.0, 1.0), Normal(2.0, 1.0)],
+            [PoissonDuration(3.0), PoissonDuration(3.0)],
+        )
+        obs = [0.0, 0.0, 0.0, 0.0]
+        bad_state = [1, 2, 1, 2]  # alternating singletons — fine, transitions are nonzero
+        @test isfinite(joint_logdensityof(hsmm, obs, bad_state))
+    end
+
+    @testset "Multi-sequence sums per-sequence joint logL" begin
+        hsmm = HSMM(
+            [0.5, 0.5], [0.0 1.0; 1.0 0.0],
+            [Normal(-2.0, 1.0), Normal(2.0, 1.0)],
+            [PoissonDuration(3.0), PoissonDuration(3.0)],
+        )
+        rng = MersenneTwister(13)
+        sim1 = rand(rng, hsmm, 100)
+        sim2 = rand(rng, hsmm, 150)
+        sep1 = joint_logdensityof(hsmm, sim1.obs_seq, sim1.state_seq)
+        sep2 = joint_logdensityof(hsmm, sim2.obs_seq, sim2.state_seq)
+        cat_obs = vcat(sim1.obs_seq, sim2.obs_seq)
+        cat_state = vcat(sim1.state_seq, sim2.state_seq)
+        combined = joint_logdensityof(
+            hsmm, cat_obs, cat_state; seq_ends=(100, 250)
+        )
+        @test combined ≈ sep1 + sep2
+    end
+end
+
+## Control-varying duration distributions
+
+@testset "Control-varying duration distributions" begin
+    # A custom HSMM whose durations depend on the control at the segment start.
+    # Two control regimes: control=1 → short sojourns (λ=1), control=2 → long (λ=10).
+    struct ControlledDurHSMM <: AbstractHSMM
+        init::Vector{Float64}
+        trans::Matrix{Float64}
+        dists::Vector{Normal{Float64}}
+        durs_short::Vector{PoissonDuration{Float64}}
+        durs_long::Vector{PoissonDuration{Float64}}
+    end
+    HiddenMarkovModels.initialization(h::ControlledDurHSMM) = h.init
+    HiddenMarkovModels.transition_matrix(h::ControlledDurHSMM, ::Any) = h.trans
+    HiddenMarkovModels.obs_distributions(h::ControlledDurHSMM, ::Any) = h.dists
+    HiddenMarkovModels.duration_distributions(h::ControlledDurHSMM, control) =
+        control == 1 ? h.durs_short : h.durs_long
+    Base.length(h::ControlledDurHSMM) = length(h.init)
+
+    h = ControlledDurHSMM(
+        [0.5, 0.5],
+        [0.0 1.0; 1.0 0.0],
+        [Normal(-2.0, 0.5), Normal(2.0, 0.5)],
+        [PoissonDuration(1.0), PoissonDuration(1.0)],
+        [PoissonDuration(10.0), PoissonDuration(10.0)],
+    )
+
+    @testset "Forward log-likelihood differs under different controls" begin
+        # An obs sequence that's consistent with LONG sojourns should be more likely
+        # under control=2 (long durations) than control=1 (short).
+        obs_long = vcat(fill(-2.0, 8), fill(2.0, 8))  # 2 sojourns of length 8
+        ctrl_short = fill(1, 16)
+        ctrl_long = fill(2, 16)
+        _, logL_short = forward(h, obs_long, ctrl_short; max_duration=30)
+        _, logL_long = forward(h, obs_long, ctrl_long; max_duration=30)
+        @test logL_long[1] > logL_short[1]
+    end
+
+    @testset "Per-t_start control: within-sequence variation matters" begin
+        # A 14-step obs sequence with TWO 7-step sojourns. If durations are looked up
+        # only at t=1 (the old buggy behavior), changing the control mid-sequence has
+        # no effect. With per-t_start lookup, swapping the control between sojourns
+        # should change the likelihood.
+        obs = vcat(fill(-2.0, 7), fill(2.0, 7))
+        # Both sojourns under control=2 (long durations expected)
+        ctrl_all_long = fill(2, 14)
+        # First sojourn under control=1 (short), second under control=2
+        ctrl_mixed = vcat(fill(1, 7), fill(2, 7))
+        _, logL_all_long = forward(h, obs, ctrl_all_long; max_duration=30)
+        _, logL_mixed = forward(h, obs, ctrl_mixed; max_duration=30)
+        # The two should differ because the control at t=8 (start of second sojourn)
+        # matters and would have been ignored in the old once-per-sequence behavior.
+        @test !isapprox(logL_all_long[1], logL_mixed[1]; atol=1e-3)
+    end
+
+    @testset "Forward ≈ FB log-likelihood under control variation" begin
+        rng = MersenneTwister(42)
+        ctrl = rand(rng, 1:2, 80)
+        obs = [randn(rng) for _ in 1:80]
+        _, logL_f = forward(h, obs, ctrl; max_duration=20)
+        γ, logL_fb = forward_backward(h, obs, ctrl; max_duration=20)
+        @test logL_f ≈ logL_fb
+        @test all(isapprox.(sum(γ; dims=1), 1.0; atol=1e-6))
+    end
+end

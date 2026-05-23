@@ -100,6 +100,18 @@ function _forward_backward!(
 
     current_logL = storage.logL[k]
 
+    # Helper: refresh dp_buffer with duration log-pmfs for segments starting at t_start.
+    # `_forward!` already refreshes dp_buffer per t_start internally, but the backward
+    # pass and marginal accumulators below need to do the same.
+    @inline function fill_dp_buffer!(t_start::Int)
+        durs = duration_distributions(hsmm, control_seq[t_start])
+        for i in 1:N
+            for d in 1:max_dur
+                dp_buffer[d, i] = logdensityof(durs[i], d)
+            end
+        end
+    end
+
     # Backward pass: log_beta[i, t] = log P(obs[t+1:t2] | a segment ENDS at t in state i)
     # Boundary at t = t2: nothing remains, so β = 1 → log β = 0.
     for i in 1:N
@@ -108,6 +120,7 @@ function _forward_backward!(
 
     for t in (t2 - 1):-1:t1
         log_trans = log_transition_matrix(hsmm, control_seq[t + 1])
+        fill_dp_buffer!(t + 1)
         for i in 1:N
             log_sum_next = typemin(R)
             for j in 1:N
@@ -137,6 +150,7 @@ function _forward_backward!(
 
     # Closure: accumulate state-marginal γ and segment-duration η contributions
     # for a candidate segment (j, t_start, d) given its log-prefix probability.
+    # Assumes dp_buffer currently holds the log-pmfs for segments starting at t_start.
     _accumulate = function (j::Int, t_start::Int, d::Int, log_prefix::R)
         t_end = t_start + d - 1
         log_obs_seg =
@@ -155,6 +169,7 @@ function _forward_backward!(
     end
 
     # A. Initial segments (start at t1) — prefix probability = π_j
+    fill_dp_buffer!(t1)
     for j in 1:N
         for d in 1:min(max_dur, t2 - t1 + 1)
             _accumulate(j, t1, d, log_init[j])
@@ -165,6 +180,7 @@ function _forward_backward!(
     for t_start in (t1 + 1):t2
         t_prev = t_start - 1
         log_trans = log_transition_matrix(hsmm, control_seq[t_start])
+        fill_dp_buffer!(t_start)
         for j in 1:N
             log_prefix = typemin(R)
             for i in 1:N
@@ -187,6 +203,7 @@ function _forward_backward!(
         for t in t1:(t2 - 1)
             fill!(storage.ξ[t], zero(R))
             log_trans = log_transition_matrix(hsmm, control_seq[t + 1])
+            fill_dp_buffer!(t + 1)
             for i in 1:N, j in 1:N
                 if i == j
                     continue

@@ -76,11 +76,15 @@ function _viterbi!(
         end
     end
 
-    # Duration log-pmf table.
-    durs = duration_distributions(hsmm, control_seq[t1])
-    for i in 1:N
-        for d in 1:max_duration
-            dp_buffer[d, i] = logdensityof(durs[i], d)
+    # Helper: refresh dp_buffer with duration log-pmfs for segments starting at t_start,
+    # so controlled HSMMs whose duration distributions depend on the control at the
+    # start of the sojourn are handled correctly.
+    @inline function fill_dp_buffer!(t_start::Int)
+        durs = duration_distributions(hsmm, control_seq[t_start])
+        for i in 1:N
+            for d in 1:max_duration
+                dp_buffer[d, i] = logdensityof(durs[i], d)
+            end
         end
     end
 
@@ -91,6 +95,7 @@ function _viterbi!(
     for t_start in t1:t2
         log_trans =
             t_start > t1 ? log_transition_matrix(hsmm, control_seq[t_start]) : nothing
+        fill_dp_buffer!(t_start)
         for d in 1:min(max_duration, t2 - t_start + 1)
             t_end = t_start + d - 1
             for j in 1:N

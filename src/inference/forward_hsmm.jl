@@ -70,17 +70,22 @@ function _forward!(
         end
     end
 
-    # Duration log-pmf table — assumed constant across the sequence under one control
-    durs = duration_distributions(hsmm, control_seq[t1])
-    for i in 1:N
-        for d in 1:max_duration
-            dp_buffer[d, i] = logdensityof(durs[i], d)
+    # Helper: refresh dp_buffer with the duration log-pmfs for segments starting at t_start.
+    # Called once per segment start so that controlled HSMMs whose duration distributions
+    # depend on the control at the start of the sojourn are handled correctly.
+    @inline function fill_dp_buffer!(t_start::Int)
+        durs = duration_distributions(hsmm, control_seq[t_start])
+        for i in 1:N
+            for d in 1:max_duration
+                dp_buffer[d, i] = logdensityof(durs[i], d)
+            end
         end
     end
 
     log_init = log_initialization(hsmm)
 
     # Initial segments (start at t1)
+    fill_dp_buffer!(t1)
     for i in 1:N
         for d in 1:min(max_duration, t2 - t1 + 1)
             t_end = t1 + d - 1
@@ -90,7 +95,8 @@ function _forward!(
         end
     end
 
-    # Internal segments: `t` is the time at which the previous segment ended
+    # Internal segments: `t` is the time at which the previous segment ended, so the
+    # next segment starts at `t + 1` and we look up controls / durations there.
     for t in t1:(t2 - 1)
         log_trans = log_transition_matrix(hsmm, control_seq[t + 1])
 
@@ -114,6 +120,7 @@ function _forward!(
             continue
         end
 
+        fill_dp_buffer!(t + 1)
         remaining_time = t2 - t
         for d in 1:min(max_duration, remaining_time)
             t_end = t + d
