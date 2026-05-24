@@ -33,8 +33,8 @@ export fit!, logdensityof, joint_logdensityof
 export viterbi, forward, forward_backward, baum_welch
 export seq_limits
 
-include("types/abstract_hmm.jl")
 include("types/abstract_hsmm.jl")
+include("types/abstract_hmm.jl")
 
 include("utils/linalg.jl")
 include("utils/valid.jl")

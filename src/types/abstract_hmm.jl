@@ -3,6 +3,15 @@
 
 Abstract supertype for an HMM amenable to simulation, inference and learning.
 
+`AbstractHMM` is a subtype of [`AbstractHSMM`](@ref): every HMM is mathematically an HSMM whose
+state sojourn lengths follow a geometric distribution with parameter `1 - a_{ii}` (where `a_{ii}`
+is the self-transition probability). The shared interface (`initialization`, `transition_matrix`,
+`obs_distributions`, `length`, `eltype`, no-control fallbacks, etc.) is inherited from
+`AbstractHSMM`. Inference functions ([`forward`](@ref), [`viterbi`](@ref),
+[`forward_backward`](@ref), [`baum_welch`](@ref), [`logdensityof`](@ref)) are then specialized on
+`AbstractHMM` and override the segment-DP versions defined for `AbstractHSMM`, so HMM workloads
+keep the fast scaled linear-space algorithms.
+
 # Interface
 
 To create your own subtype of `AbstractHMM`, you need to implement the following methods:
@@ -23,95 +32,29 @@ Any `AbstractHMM` which satisfies the interface can be given to the following fu
 - [`forward_backward`](@ref)
 - [`baum_welch`](@ref) (if `[fit!](@ref)` is implemented)
 """
-abstract type AbstractHMM end
-
-@inline DensityInterface.DensityKind(::AbstractHMM) = HasDensity()
-
-## Interface
+abstract type AbstractHMM <: AbstractHSMM end
 
 """
-    length(hmm)
+    duration_distributions(hmm::AbstractHMM)
+    duration_distributions(hmm::AbstractHMM, control)
 
-Return the number of states of `hmm`.
+Return the implied sojourn distributions of `hmm` viewed as an [`AbstractHSMM`](@ref): a vector of
+[`GeometricDuration`](@ref) instances with `p = 1 - a_{ii}`, where `a_{ii}` are the diagonal
+entries of [`transition_matrix`](@ref).
+
+This default exists so that `AbstractHMM <: AbstractHSMM` is satisfied at the interface level; it
+is not called on the hot path because HMM-specific inference methods are more specific and dispatch
+ahead of the HSMM segment-DP code.
 """
-Base.length(hmm::AbstractHMM) = length(initialization(hmm))
-
-"""
-    eltype(hmm, obs, control)
-
-Return a type that can accommodate forward-backward computations for `hmm` on observations similar to `obs`.
-
-It is typically a promotion between the element type of the initialization, the element type of the transition matrix, and the type of an observation logdensity evaluated at `obs`.
-"""
-function Base.eltype(hmm::AbstractHMM, obs, control)
-    init_type = eltype(initialization(hmm))
-    trans_type = eltype(transition_matrix(hmm, control))
-    dist = obs_distributions(hmm, control)[1]
-    logdensity_type = typeof(logdensityof(dist, obs))
-    return promote_type(init_type, trans_type, logdensity_type)
+function duration_distributions(hmm::AbstractHMM)
+    trans = transition_matrix(hmm)
+    return [GeometricDuration(1 - trans[i, i]) for i in 1:length(hmm)]
 end
 
-"""
-    initialization(hmm)
-
-Return the vector of initial state probabilities for `hmm`.
-"""
-function initialization end
-
-"""
-    log_initialization(hmm)
-
-Return the vector of initial state log-probabilities for `hmm`.
-
-Falls back on `initialization`.
-"""
-log_initialization(hmm::AbstractHMM) = elementwise_log(initialization(hmm))
-
-"""
-    transition_matrix(hmm)
-    transition_matrix(hmm, control)
-
-Return the matrix of state transition probabilities for `hmm` (possibly when `control` is applied).
-
-!!! note
-    When processing sequences, the control at time `t` influences the transition from time `t` to `t+1` (and not from time `t-1` to `t`).
-"""
-function transition_matrix end
-
-"""
-    log_transition_matrix(hmm)
-    log_transition_matrix(hmm, control)
-
-Return the matrix of state transition log-probabilities for `hmm` (possibly when `control` is applied).
-
-Falls back on `transition_matrix`.
-
-!!! note
-    When processing sequences, the control at time `t` influences the transition from time `t-1` to `t` (since version 0.7 of the package).
-"""
-function log_transition_matrix(hmm::AbstractHMM, control)
-    return elementwise_log(transition_matrix(hmm, control))
+function duration_distributions(hmm::AbstractHMM, control)
+    trans = transition_matrix(hmm, control)
+    return [GeometricDuration(1 - trans[i, i]) for i in 1:length(hmm)]
 end
-
-"""
-    obs_distributions(hmm)
-    obs_distributions(hmm, control)
-
-Return a vector of observation distributions, one for each state of `hmm` (possibly when `control` is applied).
-
-These distribution objects should implement
-
-- `Random.rand(rng, dist)` for sampling
-- `DensityInterface.logdensityof(dist, obs)` for inference
-- `StatsAPI.fit!(dist, obs_seq, weight_seq)` for learning
-"""
-function obs_distributions end
-
-## Fallbacks for no control
-
-transition_matrix(hmm::AbstractHMM, ::Nothing) = transition_matrix(hmm)
-log_transition_matrix(hmm::AbstractHMM, ::Nothing) = log_transition_matrix(hmm)
-obs_distributions(hmm::AbstractHMM, ::Nothing) = obs_distributions(hmm)
 
 """
     StatsAPI.fit!(
@@ -146,7 +89,8 @@ end
 
 Simulate `hmm` for `T` time steps, or when the sequence `control_seq` is applied.
 
-Return a named tuple `(; state_seq, obs_seq)`.
+Return a named tuple `(; state_seq, obs_seq)`. Note that this overrides the HSMM `rand`
+(which additionally returns a `duration_seq`), preserving the HMM's historical return shape.
 """
 function Random.rand(rng::AbstractRNG, hmm::AbstractHMM, control_seq::AbstractVector)
     T = length(control_seq)
@@ -187,12 +131,3 @@ end
 function Random.rand(hmm::AbstractHMM, T::Integer)
     return rand(hmm, Fill(nothing, T))
 end
-
-## Prior
-
-"""
-    logdensityof(hmm)
-
-Return the prior loglikelihood associated with the parameters of `hmm`.
-"""
-DensityInterface.logdensityof(hmm::AbstractHMM) = false

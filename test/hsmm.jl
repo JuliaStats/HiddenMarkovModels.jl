@@ -248,11 +248,24 @@ end
         @test eltype(hsmm.trans) == Float32
     end
 
-    @testset "AbstractHSMM is not a subtype of AbstractHMM" begin
-        # Important: prevents HMM-only methods from silently dispatching on HSMMs.
+    @testset "Type hierarchy: AbstractHMM <: AbstractHSMM" begin
+        @test AbstractHMM <: AbstractHSMM
         @test !(AbstractHSMM <: AbstractHMM)
         hsmm = _make_simple_hsmm(n_states=2)
         @test !(hsmm isa AbstractHMM)
+        @test hsmm isa AbstractHSMM
+        hmm = HMM([0.5, 0.5], [0.9 0.1; 0.2 0.8], [Normal(-2.0, 1.0), Normal(2.0, 1.0)])
+        @test hmm isa AbstractHMM
+        @test hmm isa AbstractHSMM
+    end
+
+    @testset "duration_distributions(hmm) derives geometric durations" begin
+        hmm = HMM([0.5, 0.5], [0.9 0.1; 0.2 0.8], [Normal(-2.0, 1.0), Normal(2.0, 1.0)])
+        durs = duration_distributions(hmm)
+        @test length(durs) == 2
+        @test all(d -> d isa GeometricDuration, durs)
+        @test isapprox(durs[1].p, 1 - 0.9; atol=1e-10)
+        @test isapprox(durs[2].p, 1 - 0.8; atol=1e-10)
     end
 end
 
