@@ -44,7 +44,10 @@ function initialize_hsmm_viterbi(
     ψ_state = zeros(Int, N, T)
     ψ_dur = zeros(Int, N, T)
     cum_log_obs = Matrix{R}(undef, T + 1, N)
-    dp_buffer = [Matrix{R}(undef, max_duration, N) for _ in 1:K]
+    dp_buffer = Vector{Matrix{R}}(undef, K)
+    for k in 1:K
+        dp_buffer[k] = Matrix{R}(undef, max_duration, N)
+    end
     return HSMMViterbiStorage{R}(
         q, logL, δ, ψ_state, ψ_dur, cum_log_obs, max_duration, dp_buffer
     )

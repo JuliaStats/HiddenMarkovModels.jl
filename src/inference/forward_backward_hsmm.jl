@@ -90,13 +90,19 @@ function initialize_hsmm_forward_backward(
     end
     logL = Vector{R}(undef, K)
     η = zeros(R, max_duration, N)
-    η_per_seq = [zeros(R, max_duration, N) for _ in 1:K]
-
+    # Explicit pre-allocate-and-fill rather than comprehensions — closures over `R`
+    # produce runtime dispatch that JET flags on Julia 1.10.
+    η_per_seq = Vector{Matrix{R}}(undef, K)
     log_α = fill(typemin(R), N, T)
     log_beta = fill(typemin(R), N, T)
     cum_log_obs = Matrix{R}(undef, T + 1, N)
-    dp_buffer = [Matrix{R}(undef, max_duration, N) for _ in 1:K]
-    incoming_log_prob = [Vector{R}(undef, N) for _ in 1:K]
+    dp_buffer = Vector{Matrix{R}}(undef, K)
+    incoming_log_prob = Vector{Vector{R}}(undef, K)
+    for k in 1:K
+        η_per_seq[k] = zeros(R, max_duration, N)
+        dp_buffer[k] = Matrix{R}(undef, max_duration, N)
+        incoming_log_prob[k] = Vector{R}(undef, N)
+    end
 
     return HSMMForwardBackwardStorage{R,M}(
         γ,

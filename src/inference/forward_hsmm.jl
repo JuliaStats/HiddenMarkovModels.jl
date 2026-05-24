@@ -41,9 +41,14 @@ function initialize_hsmm_forward(
     # cum_log_obs[t+1, i] - cum_log_obs[t1, i] is the per-state log-likelihood of obs_seq[t1:t]
     cum_log_obs = Matrix{R}(undef, T + 1, N)
 
-    # One dp_buffer per sequence so that sequences can be processed by parallel threads
-    dp_buffer = [Matrix{R}(undef, max_duration, N) for _ in 1:K]
-    incoming_log_prob = [Vector{R}(undef, N) for _ in 1:K]
+    # One dp_buffer per sequence so that sequences can be processed by parallel threads.
+    # Use explicit pre-allocation rather than a comprehension to avoid the closure capturing
+    dp_buffer = Vector{Matrix{R}}(undef, K)
+    incoming_log_prob = Vector{Vector{R}}(undef, K)
+    for k in 1:K
+        dp_buffer[k] = Matrix{R}(undef, max_duration, N)
+        incoming_log_prob[k] = Vector{R}(undef, N)
+    end
 
     return HSMMForwardStorage{R}(
         log_α, logL, cum_log_obs, max_duration, dp_buffer, incoming_log_prob
