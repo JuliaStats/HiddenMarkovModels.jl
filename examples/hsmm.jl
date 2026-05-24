@@ -206,10 +206,9 @@ in the true model.
 - [`NegBinomialDuration`](@ref) — overdispersed (variance > mean); useful when
   some sojourns are much longer than typical.
 
-All three implement [`DensityInterface.logdensityof`](@ref), [`Random.rand`](@ref),
-and [`StatsAPI.fit!`](@ref), so they work without `Distributions.jl`. To define
-your own duration distribution, subtype [`AbstractDurationDistribution`](@ref) and
-implement those three methods.
+All three implement `DensityInterface.logdensityof`, `Random.rand`, and `StatsAPI.fit!`,
+so they work without `Distributions.jl`. To define your own duration distribution,
+subtype [`AbstractDurationDistribution`](@ref) and implement those three methods.
 =#
 
 # ## Tests  #src

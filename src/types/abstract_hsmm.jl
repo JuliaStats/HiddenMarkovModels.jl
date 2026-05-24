@@ -126,7 +126,30 @@ log_transition_matrix(hsmm::AbstractHSMM, ::Nothing) = log_transition_matrix(hsm
 obs_distributions(hsmm::AbstractHSMM, ::Nothing) = obs_distributions(hsmm)
 duration_distributions(hsmm::AbstractHSMM, ::Nothing) = duration_distributions(hsmm)
 
+"""
+    log_initialization(model)
+
+Return the vector of initial state log-probabilities for `model`.
+
+Default implementation calls `log.(initialization(model))`; override on a concrete subtype
+that already stores log-initialization to avoid recomputation.
+"""
 log_initialization(hsmm::AbstractHSMM) = elementwise_log(initialization(hsmm))
+
+"""
+    log_transition_matrix(model)
+    log_transition_matrix(model, control)
+
+Return the matrix of state transition log-probabilities for `model` (possibly when `control`
+is applied).
+
+Default implementation calls `log.(transition_matrix(model, control))`; override on a concrete
+subtype that already stores log-transitions to avoid recomputation.
+
+!!! note
+    When processing sequences, the control at time `t` influences the transition from time
+    `t-1` to `t` (since version 0.7 of the package).
+"""
 log_transition_matrix(hsmm::AbstractHSMM) = elementwise_log(transition_matrix(hsmm))
 
 function log_transition_matrix(hsmm::AbstractHSMM, control)
