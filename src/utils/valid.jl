@@ -15,15 +15,12 @@ function valid_dists(d::AbstractVector)
     return true
 end
 
-"""
-    valid_hmm(hmm)
-
-Perform some checks to rule out obvious inconsistencies with an `AbstractHMM` object.
-"""
-function valid_hmm(hmm::AbstractHMM, control=nothing)
-    init = initialization(hmm)
-    trans = transition_matrix(hmm, control)
-    dists = obs_distributions(hmm, control)
+# Shared kernel for both `valid_hmm` and `valid_hsmm`: checks the structural pieces of any
+# state-space model (init / trans / dists). Per-model-type extras are layered on top.
+function _valid_state_space_core(model, control)
+    init = initialization(model)
+    trans = transition_matrix(model, control)
+    dists = obs_distributions(model, control)
     if !(length(init) == length(dists) == size(trans, 1) == size(trans, 2))
         return false
     elseif !valid_prob_vec(init)
@@ -35,3 +32,10 @@ function valid_hmm(hmm::AbstractHMM, control=nothing)
     end
     return true
 end
+
+"""
+    valid_hmm(hmm)
+
+Perform some checks to rule out obvious inconsistencies with an `AbstractHMM` object.
+"""
+valid_hmm(hmm::AbstractHMM, control=nothing) = _valid_state_space_core(hmm, control)

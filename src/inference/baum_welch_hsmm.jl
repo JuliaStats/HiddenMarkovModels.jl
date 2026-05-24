@@ -1,18 +1,3 @@
-function _hsmm_baum_welch_has_converged(
-    logL_evolution::Vector; atol::Real, loglikelihood_increasing::Bool
-)
-    if length(logL_evolution) >= 2
-        logL, logL_prev = logL_evolution[end], logL_evolution[end - 1]
-        progress = logL - logL_prev
-        if loglikelihood_increasing && progress < min(0, -atol)
-            error("Loglikelihood decreased from $logL_prev to $logL in Baum-Welch")
-        elseif progress < atol
-            return true
-        end
-    end
-    return false
-end
-
 """
 $(SIGNATURES)
 """
@@ -31,7 +16,7 @@ function baum_welch!(
         forward_backward!(fb_storage, hsmm, obs_seq, control_seq; seq_ends)
         push!(logL_evolution, sum(fb_storage.logL))
         fit!(hsmm, fb_storage, obs_seq, control_seq; seq_ends)
-        if _hsmm_baum_welch_has_converged(logL_evolution; atol, loglikelihood_increasing)
+        if baum_welch_has_converged(logL_evolution; atol, loglikelihood_increasing)
             break
         end
     end

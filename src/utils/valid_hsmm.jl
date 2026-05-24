@@ -10,30 +10,23 @@ matching dimensions, valid observation distributions), this verifies:
 - there is one duration distribution per state, and each carries a density.
 """
 function valid_hsmm(hsmm::AbstractHSMM, control=nothing)
-    init = initialization(hsmm)
+    _valid_state_space_core(hsmm, control) || return false
+
     trans = transition_matrix(hsmm, control)
-    dists = obs_distributions(hsmm, control)
     durations = duration_distributions(hsmm, control)
-    N = length(init)
+    N = length(hsmm)
 
-    if !(N == length(dists) == length(durations) == size(trans, 1) == size(trans, 2))
-        return false
-    elseif !valid_prob_vec(init)
-        return false
-    elseif !valid_trans_mat(trans)
-        return false
-    elseif !valid_dists(dists)
-        return false
-    end
+    # One duration distribution per state.
+    length(durations) == N || return false
 
-    # No self-transitions (allowing for numerical noise)
+    # No self-transitions (allowing for numerical noise).
     for i in 1:N
         if trans[i, i] > 1e-10
             return false
         end
     end
 
-    # Duration distributions must carry a density
+    # Duration distributions must carry a density.
     for dur_dist in durations
         if DensityKind(dur_dist) == NoDensity()
             return false

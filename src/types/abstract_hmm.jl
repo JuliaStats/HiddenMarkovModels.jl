@@ -56,6 +56,9 @@ function duration_distributions(hmm::AbstractHMM, control)
     return [GeometricDuration(1 - trans[i, i]) for i in 1:length(hmm)]
 end
 
+# Disambiguate against `duration_distributions(::AbstractHSMM, ::Nothing)`.
+duration_distributions(hmm::AbstractHMM, ::Nothing) = duration_distributions(hmm)
+
 """
     StatsAPI.fit!(
         hmm, fb_storage::ForwardBackwardStorage,
@@ -120,14 +123,7 @@ function Random.rand(rng::AbstractRNG, hmm::AbstractHMM, control_seq::AbstractVe
     return (; state_seq=state_seq, obs_seq=obs_seq)
 end
 
-function Random.rand(hmm::AbstractHMM, control_seq::AbstractVector)
-    return rand(default_rng(), hmm, control_seq)
-end
-
-function Random.rand(rng::AbstractRNG, hmm::AbstractHMM, T::Integer)
-    return rand(rng, hmm, Fill(nothing, T))
-end
-
-function Random.rand(hmm::AbstractHMM, T::Integer)
-    return rand(hmm, Fill(nothing, T))
-end
+# The `rand(hmm, control_seq)`, `rand(rng, hmm, T)`, and `rand(hmm, T)` wrappers are inherited
+# from `AbstractHSMM`. The inner `rand(rng, hmm, control_seq)` defined above is more specific
+# than the `AbstractHSMM` version and is what those wrappers ultimately dispatch to, preserving
+# HMM's 2-tuple `(state_seq, obs_seq)` return shape.
