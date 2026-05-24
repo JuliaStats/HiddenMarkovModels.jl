@@ -25,10 +25,40 @@ struct HSMMForwardBackwardStorage{R,M<:AbstractMatrix{R}}
     cum_log_obs::Matrix{R}
     max_duration::Int
     dp_buffer::Vector{Matrix{R}}
+    incoming_log_prob::Vector{Vector{R}}
     η_per_seq::Vector{Matrix{R}}
 end
 
 Base.eltype(::HSMMForwardBackwardStorage{R}) where {R} = R
+
+# Accumulate state-marginal γ and segment-duration η contributions for a candidate
+# segment (j, t_start, d) given its log-prefix probability. Assumes `dp_buffer` already
+# holds the duration log-pmfs for segments starting at `t_start`.
+@inline function _accumulate_segment!(
+    γ::AbstractMatrix,
+    η_local::AbstractMatrix,
+    log_beta::AbstractMatrix,
+    cum_log_obs::AbstractMatrix,
+    dp_buffer::AbstractMatrix,
+    current_logL::R,
+    j::Int,
+    t_start::Int,
+    d::Int,
+    log_prefix::R,
+) where {R}
+    t_end = t_start + d - 1
+    log_obs_seg = cum_log_obs[t_end + 1, j] - cum_log_obs[t_start, j]
+    log_seg_prob =
+        log_prefix + dp_buffer[d, j] + log_obs_seg + log_beta[j, t_end] - current_logL
+    prob = exp(log_seg_prob)
+    if prob > zero(R)
+        for τ in t_start:t_end
+            γ[j, τ] += prob
+        end
+        η_local[d, j] += prob
+    end
+    return nothing
+end
 
 """
 $(SIGNATURES)
@@ -66,9 +96,20 @@ function initialize_hsmm_forward_backward(
     log_beta = fill(typemin(R), N, T)
     cum_log_obs = Matrix{R}(undef, T + 1, N)
     dp_buffer = [Matrix{R}(undef, max_duration, N) for _ in 1:K]
+    incoming_log_prob = [Vector{R}(undef, N) for _ in 1:K]
 
     return HSMMForwardBackwardStorage{R,M}(
-        γ, ξ, η, logL, log_α, log_beta, cum_log_obs, max_duration, dp_buffer, η_per_seq
+        γ,
+        ξ,
+        η,
+        logL,
+        log_α,
+        log_beta,
+        cum_log_obs,
+        max_duration,
+        dp_buffer,
+        incoming_log_prob,
+        η_per_seq,
     )
 end
 
@@ -95,22 +136,11 @@ function _forward_backward!(
         storage.cum_log_obs,
         storage.max_duration,
         storage.dp_buffer,
+        storage.incoming_log_prob,
     )
     _forward!(forward_storage_view, hsmm, obs_seq, control_seq, seq_ends, k)
 
     current_logL = storage.logL[k]
-
-    # Helper: refresh dp_buffer with duration log-pmfs for segments starting at t_start.
-    # `_forward!` already refreshes dp_buffer per t_start internally, but the backward
-    # pass and marginal accumulators below need to do the same.
-    @inline function fill_dp_buffer!(t_start::Int)
-        durs = duration_distributions(hsmm, control_seq[t_start])
-        for i in 1:N
-            for d in 1:max_dur
-                dp_buffer[d, i] = logdensityof(durs[i], d)
-            end
-        end
-    end
 
     # Backward pass: log_beta[i, t] = log P(obs[t+1:t2] | a segment ENDS at t in state i)
     # Boundary at t = t2: nothing remains, so β = 1 → log β = 0.
@@ -120,7 +150,7 @@ function _forward_backward!(
 
     for t in (t2 - 1):-1:t1
         log_trans = log_transition_matrix(hsmm, control_seq[t + 1])
-        fill_dp_buffer!(t + 1)
+        _fill_dp_buffer!(dp_buffer, hsmm, control_seq[t + 1], max_dur, N)
         for i in 1:N
             log_sum_next = typemin(R)
             for j in 1:N
@@ -147,32 +177,26 @@ function _forward_backward!(
     @views storage.γ[:, t1:t2] .= zero(R)
 
     log_init = log_initialization(hsmm)
-
-    # Closure: accumulate state-marginal γ and segment-duration η contributions
-    # for a candidate segment (j, t_start, d) given its log-prefix probability.
-    # Assumes dp_buffer currently holds the log-pmfs for segments starting at t_start.
-    _accumulate = function (j::Int, t_start::Int, d::Int, log_prefix::R)
-        t_end = t_start + d - 1
-        log_obs_seg =
-            storage.cum_log_obs[t_end + 1, j] - storage.cum_log_obs[t_start, j]
-        log_seg_prob =
-            log_prefix + dp_buffer[d, j] + log_obs_seg + storage.log_beta[j, t_end] -
-            current_logL
-        prob = exp(log_seg_prob)
-        if prob > zero(R)
-            for τ in t_start:t_end
-                storage.γ[j, τ] += prob
-            end
-            η_local[d, j] += prob
-        end
-        return nothing
-    end
+    γ = storage.γ
+    log_beta = storage.log_beta
+    cum_log_obs2 = storage.cum_log_obs
 
     # A. Initial segments (start at t1) — prefix probability = π_j
-    fill_dp_buffer!(t1)
+    _fill_dp_buffer!(dp_buffer, hsmm, control_seq[t1], max_dur, N)
     for j in 1:N
         for d in 1:min(max_dur, t2 - t1 + 1)
-            _accumulate(j, t1, d, log_init[j])
+            _accumulate_segment!(
+                γ,
+                η_local,
+                log_beta,
+                cum_log_obs2,
+                dp_buffer,
+                current_logL,
+                j,
+                t1,
+                d,
+                log_init[j],
+            )
         end
     end
 
@@ -180,7 +204,7 @@ function _forward_backward!(
     for t_start in (t1 + 1):t2
         t_prev = t_start - 1
         log_trans = log_transition_matrix(hsmm, control_seq[t_start])
-        fill_dp_buffer!(t_start)
+        _fill_dp_buffer!(dp_buffer, hsmm, control_seq[t_start], max_dur, N)
         for j in 1:N
             log_prefix = typemin(R)
             for i in 1:N
@@ -193,7 +217,18 @@ function _forward_backward!(
             if log_prefix > typemin(R)
                 remaining = t2 - t_start + 1
                 for d in 1:min(max_dur, remaining)
-                    _accumulate(j, t_start, d, log_prefix)
+                    _accumulate_segment!(
+                        γ,
+                        η_local,
+                        log_beta,
+                        cum_log_obs2,
+                        dp_buffer,
+                        current_logL,
+                        j,
+                        t_start,
+                        d,
+                        log_prefix,
+                    )
                 end
             end
         end
@@ -203,7 +238,7 @@ function _forward_backward!(
         for t in t1:(t2 - 1)
             fill!(storage.ξ[t], zero(R))
             log_trans = log_transition_matrix(hsmm, control_seq[t + 1])
-            fill_dp_buffer!(t + 1)
+            _fill_dp_buffer!(dp_buffer, hsmm, control_seq[t + 1], max_dur, N)
             for i in 1:N, j in 1:N
                 if i == j
                     continue

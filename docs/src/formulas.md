@@ -205,6 +205,122 @@ To sum up,
 \end{align*}
 ```
 
+## Hidden semi-Markov models
+
+A Hidden Semi-Markov Model (HSMM) generalizes an HMM by replacing the implicit
+geometric sojourn-time distribution with an explicit per-state distribution over
+durations. Concretely, a state $j$ is entered, a duration $d \sim p_d(\cdot \mid j)$
+is drawn, the chain emits observations from state $j$ for $d$ consecutive timesteps,
+and only then transitions to a different state (self-transitions are forbidden).
+
+We use the same notation as above for $\pi$, $A$, and $B$, plus
+
+* let $p_d(d \mid j)$ be the duration distribution for state $j$ on the positive
+  integers $\{1, 2, 3, \ldots\}$.
+
+The transition matrix is constrained to have zero diagonal ($a_{j,j} = 0$).
+
+### Segment-based forward variable
+
+Because the chain is governed by sojourns rather than individual transitions, the
+forward variable is defined at *segment boundaries* rather than per-timestep:
+
+```math
+\alpha^{\text{HSMM}}_{j,t} = \mathbb{P}(Y_{1:t},\; \text{a segment ends at } t \text{ in state } j)
+```
+
+The dynamic-programming recursion sums over the duration $d$ of the segment that
+ends at $t$ and the state $i$ that the chain was in just before it:
+
+```math
+\alpha^{\text{HSMM}}_{j,t} = \sum_{d=1}^{\min(D, t-1)} \left( \sum_{i \neq j} \alpha^{\text{HSMM}}_{i,t-d} \, a_{i,j} \right) p_d(d \mid j) \prod_{\tau=t-d+1}^{t} b_{j,\tau}
+```
+
+with the special-case "initial segment" contribution
+
+```math
+\alpha^{\text{HSMM}}_{j,t} \mathrel{+}= \pi_j \, p_d(t \mid j) \prod_{\tau=1}^{t} b_{j,\tau} \qquad (1 \le t \le D)
+```
+
+Here $D$ is the maximum-duration cap (the `max_duration` keyword in code) — the
+recursion is $O(N^2 T D)$ as a result. The product $\prod_{\tau} b_{j,\tau}$ is
+implemented in log-space using cumulative per-state observation log-likelihoods so
+that the segment observation factor at $(j, t_\text{start}, t_\text{end})$ is one
+subtraction rather than $d$ multiplications.
+
+### Likelihood
+
+By construction every observation sequence must end with a segment boundary at $T$, so
+
+```math
+\mathcal{L} = \mathbb{P}(Y_{1:T}) = \sum_{j=1}^{N} \alpha^{\text{HSMM}}_{j,T}
+```
+
+### Backward variable, marginals, and duration counts
+
+Define $\beta^{\text{HSMM}}_{j,t} = \mathbb{P}(Y_{t+1:T} \mid \text{a segment ends at } t \text{ in state } j)$,
+with boundary $\beta^{\text{HSMM}}_{j,T} = 1$. The recursion is
+
+```math
+\beta^{\text{HSMM}}_{i,t} = \sum_{j \neq i} a_{i,j} \sum_{d=1}^{\min(D, T-t)} p_d(d \mid j) \left( \prod_{\tau=t+1}^{t+d} b_{j,\tau} \right) \beta^{\text{HSMM}}_{j,t+d}
+```
+
+The HSMM produces three posterior aggregates the EM (Baum–Welch) step needs:
+
+```math
+\begin{align*}
+\gamma_{j,t} & = \mathbb{P}(X_t = j \mid Y_{1:T}) \\
+\xi^{\text{HSMM}}_{i,j,t} & = \mathbb{P}(\text{segment ends at } t \text{ in state } i,\; \text{next segment starts at } t+1 \text{ in state } j \mid Y_{1:T}) \\
+\eta_{d,j} & = \mathbb{E}\!\left[\, \#\{\text{segments of state } j \text{ with duration } d\} \,\middle|\, Y_{1:T} \right]
+\end{align*}
+```
+
+`γ` is the smoothed per-timestep state marginal, `ξ` is the segment-to-segment
+transition marginal, and `η` is the expected per-state duration count. They are
+computed by accumulating contributions from each candidate segment $(j, t_\text{start}, d)$,
+weighted by the corresponding prefix (initial: $\pi_j$; internal: $\sum_{i \neq j} \alpha^{\text{HSMM}}_{i,t_\text{start}-1} a_{i,j}$), the duration log-pmf, the segment
+observation factor, and the backward value at the segment's end.
+
+### Baum–Welch updates
+
+The M-step formulas for initial, transition, and observation parameters look familiar:
+
+```math
+\pi_j^{\text{new}} = \sum_{k=1}^{K} \gamma^{(k)}_{j,1}, \qquad a_{i,j}^{\text{new}} = \frac{\sum_{k,t} \xi^{\text{HSMM},(k)}_{i,j,t}}{\sum_{k,t,j'} \xi^{\text{HSMM},(k)}_{i,j',t}}
+```
+
+with $a_{j,j}^{\text{new}} = 0$ enforced structurally. Observation distributions
+are refit using $\gamma$ as per-timestep weights, as in the HMM case. The
+duration distributions are refit using `η` as weights on the duration support:
+
+```math
+p_d(\cdot \mid j)^{\text{new}} = \arg\max_{p_d} \sum_{d=1}^{D} \eta_{d,j} \log p_d(d \mid j)
+```
+
+For [`GeometricDuration`](@ref) and [`PoissonDuration`](@ref) this reduces to a
+weighted-mean estimator; for [`NegBinomialDuration`](@ref) we profile out $p$ and
+do a 1-D Newton iteration on $r$ driven by the digamma score equation.
+
+### Derivatives of the log-likelihood
+
+Mirroring Qin (2000) but in segment form,
+
+```math
+\begin{align*}
+\frac{\partial \log \mathcal{L}}{\partial \pi_j} & = \frac{\gamma_{j,1}}{\pi_j} \\
+\frac{\partial \log \mathcal{L}}{\partial a_{i,j,t}} & = \frac{\xi^{\text{HSMM}}_{i,j,t}}{a_{i,j,t}} \\
+\frac{\partial \log \mathcal{L}}{\partial \log b_{j,t}} & = \gamma_{j,t} \\
+\frac{\partial \log \mathcal{L}}{\partial \log p_d(d \mid j)} & = \eta_{d,j}
+\end{align*}
+```
+
+The reverse-mode `ChainRules` rrule shipped with the package uses the first three
+of these to backpropagate through `logdensityof` to `init`, `trans`, and `dists`.
+The last is omitted because Zygote currently mishandles pullbacks through vectors
+of mutable structs (our duration distributions are mutable so `fit!` can update
+them in place during Baum–Welch). To get gradients w.r.t. duration parameters,
+use `ForwardDiff` — it has no such limitation.
+
 ## Bibliography
 
 ```@bibliography

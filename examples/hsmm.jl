@@ -15,6 +15,7 @@ times.
 
 using Distributions
 using HiddenMarkovModels
+using HMMTest  #src
 using LinearAlgebra
 using Random
 using StableRNGs
@@ -41,10 +42,10 @@ ships three concrete duration distributions in core: [`GeometricDuration`](@ref)
 [`PoissonDuration`](@ref), and [`NegBinomialDuration`](@ref).
 =#
 
-init = [0.5, 0.5]
-trans = [0.0 1.0; 1.0 0.0]
-dists = [Normal(-2.0, 0.7), Normal(2.0, 0.7)]
-durations = [PoissonDuration(4.0), PoissonDuration(4.0)]
+init = [0.4, 0.3, 0.3]
+trans = [0.0 0.6 0.4; 0.5 0.0 0.5; 0.5 0.5 0.0]
+dists = [Normal(-3.0, 0.7), Normal(0.0, 0.7), Normal(3.0, 0.7)]
+durations = [PoissonDuration(4.0), PoissonDuration(4.0), PoissonDuration(4.0)]
 hsmm = HSMM(init, trans, dists, durations)
 
 # ## Simulation
@@ -138,10 +139,10 @@ observation distributions, **and** duration distributions in one pass per EM
 iteration. As with the HMM case it needs a reasonable starting guess.
 =#
 
-init_guess = [0.5, 0.5]
-trans_guess = [0.0 1.0; 1.0 0.0]
-dists_guess = [Normal(-1.0, 1.0), Normal(1.0, 1.0)]
-durations_guess = [PoissonDuration(2.0), PoissonDuration(6.0)]
+init_guess = [0.1, 0.5, 0.4]
+trans_guess = [0.0 0.3 0.7; 0.7 0.0 0.3; 0.3 0.7 0.0]
+dists_guess = [Normal(-2.0, 1.0), Normal(0.5, 1.0), Normal(2.0, 1.0)]
+durations_guess = [PoissonDuration(2.0), PoissonDuration(6.0), PoissonDuration(8.0)]
 hsmm_guess = HSMM(init_guess, trans_guess, dists_guess, durations_guess);
 
 #=
@@ -177,11 +178,11 @@ HSMMs use the same concatenation convention as HMMs: pass a flattened
 sequence. [`seq_limits`](@ref) recovers the slice for a given sequence.
 =#
 
-nb_seqs = 5
+nb_seqs = 100
 obs_seqs = [rand(rng, hsmm, rand(rng, 100:200)).obs_seq for _ in 1:nb_seqs]
 obs_seq_concat = reduce(vcat, obs_seqs)
 seq_ends = cumsum(length.(obs_seqs))
-seq_ends'
+first(seq_ends, 5)'
 
 #-
 
@@ -219,3 +220,8 @@ implement those three methods.
 @test all(isapprox.(sum(γ; dims=1), 1; atol=1e-6))  #src
 @test all(diff(loglikelihood_evolution) .>= -1e-8)  #src
 @test loglikelihood_evolution[end] > loglikelihood_evolution[1]  #src
+
+control_seq_tests = fill(nothing, last(seq_ends))  #src
+test_coherent_algorithms(rng, hsmm, control_seq_tests; seq_ends, hsmm_guess)  #src
+test_type_stability(rng, hsmm, control_seq_tests; seq_ends, hsmm_guess)  #src
+test_allocations(rng, hsmm, control_seq_tests; seq_ends, hsmm_guess)  #src

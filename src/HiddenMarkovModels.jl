@@ -57,6 +57,7 @@ include("inference/forward_hsmm.jl")
 include("inference/viterbi_hsmm.jl")
 include("inference/forward_backward_hsmm.jl")
 include("inference/baum_welch_hsmm.jl")
+include("inference/chainrules_hsmm.jl")
 
 include("types/hmm.jl")
 include("types/duration_distribution.jl")

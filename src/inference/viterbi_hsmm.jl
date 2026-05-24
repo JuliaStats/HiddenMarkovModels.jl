@@ -76,48 +76,39 @@ function _viterbi!(
         end
     end
 
-    # Helper: refresh dp_buffer with duration log-pmfs for segments starting at t_start,
-    # so controlled HSMMs whose duration distributions depend on the control at the
-    # start of the sojourn are handled correctly.
-    @inline function fill_dp_buffer!(t_start::Int)
-        durs = duration_distributions(hsmm, control_seq[t_start])
-        for i in 1:N
-            for d in 1:max_duration
-                dp_buffer[d, i] = logdensityof(durs[i], d)
+    log_init = log_initialization(hsmm)
+
+    # Segment DP. We split into the initial (t_start = t1) and internal (t_start > t1)
+    # branches so `log_trans` has a concrete type in the internal branch.
+    _fill_dp_buffer!(dp_buffer, hsmm, control_seq[t1], max_duration, N)
+    for d in 1:min(max_duration, t2 - t1 + 1)
+        t_end = t1 + d - 1
+        for j in 1:N
+            log_obs_seg = cum_log_obs[t_end + 1, j] - cum_log_obs[t1, j]
+            score = log_init[j] + dp_buffer[d, j] + log_obs_seg
+            if score > δ[j, t_end]
+                δ[j, t_end] = score
+                ψ_state[j, t_end] = 0  # initial-segment marker
+                ψ_dur[j, t_end] = d
             end
         end
     end
 
-    log_init = log_initialization(hsmm)
-
-    # Segment DP. Iterating `t_start` outermost ensures that δ[i, t_start - 1] is finalized
-    # by the time we consult it, since all writers to that cell ran during earlier iterations.
-    for t_start in t1:t2
-        log_trans =
-            t_start > t1 ? log_transition_matrix(hsmm, control_seq[t_start]) : nothing
-        fill_dp_buffer!(t_start)
+    for t_start in (t1 + 1):t2
+        log_trans = log_transition_matrix(hsmm, control_seq[t_start])
+        _fill_dp_buffer!(dp_buffer, hsmm, control_seq[t_start], max_duration, N)
         for d in 1:min(max_duration, t2 - t_start + 1)
             t_end = t_start + d - 1
             for j in 1:N
                 log_obs_seg = cum_log_obs[t_end + 1, j] - cum_log_obs[t_start, j]
                 log_dur_obs = dp_buffer[d, j] + log_obs_seg
-
-                if t_start == t1
-                    score = log_init[j] + log_dur_obs
-                    if score > δ[j, t_end]
-                        δ[j, t_end] = score
-                        ψ_state[j, t_end] = 0  # initial-segment marker
-                        ψ_dur[j, t_end] = d
-                    end
-                else
-                    for i in 1:N
-                        if i != j
-                            score = δ[i, t_start - 1] + log_trans[i, j] + log_dur_obs
-                            if score > δ[j, t_end]
-                                δ[j, t_end] = score
-                                ψ_state[j, t_end] = i
-                                ψ_dur[j, t_end] = d
-                            end
+                for i in 1:N
+                    if i != j
+                        score = δ[i, t_start - 1] + log_trans[i, j] + log_dur_obs
+                        if score > δ[j, t_end]
+                            δ[j, t_end] = score
+                            ψ_state[j, t_end] = i
+                            ψ_dur[j, t_end] = d
                         end
                     end
                 end

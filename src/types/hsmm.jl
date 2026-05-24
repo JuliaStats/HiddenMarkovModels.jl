@@ -127,8 +127,7 @@ function StatsAPI.fit!(
         if s > zero(s)
             row ./= s
         else
-            # No outgoing transitions observed for state i — fall back to uniform off-diagonal
-            # so the row stays a valid probability vector.
+            # No outgoing transitions observed for state i
             fill!(row, one(eltype(row)) / (N - 1))
             hsmm.trans[i, i] = zero(eltype(hsmm.trans))
         end
@@ -140,7 +139,7 @@ function StatsAPI.fit!(
     end
 
     # Refit duration distributions from expected segment-duration counts.
-    duration_support = collect(1:fb_storage.max_duration)
+    duration_support = 1:fb_storage.max_duration
     for i in 1:N
         weights = view(η, :, i)
         if sum(weights) > zero(eltype(weights))

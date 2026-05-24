@@ -18,6 +18,8 @@ struct HSMMForwardStorage{R}
     "maximum sojourn duration considered for any segment"
     max_duration::Int
     dp_buffer::Vector{Matrix{R}}
+    "per-sequence scratch for incoming-segment log-probabilities (length N)"
+    incoming_log_prob::Vector{Vector{R}}
 end
 
 """
@@ -41,8 +43,23 @@ function initialize_hsmm_forward(
 
     # One dp_buffer per sequence so that sequences can be processed by parallel threads
     dp_buffer = [Matrix{R}(undef, max_duration, N) for _ in 1:K]
+    incoming_log_prob = [Vector{R}(undef, N) for _ in 1:K]
 
-    return HSMMForwardStorage{R}(log_α, logL, cum_log_obs, max_duration, dp_buffer)
+    return HSMMForwardStorage{R}(
+        log_α, logL, cum_log_obs, max_duration, dp_buffer, incoming_log_prob
+    )
+end
+
+@inline function _fill_dp_buffer!(
+    dp_buffer::AbstractMatrix, hsmm::AbstractHSMM, control, max_duration::Int, N::Int
+)
+    durs = duration_distributions(hsmm, control)
+    for i in 1:N
+        for d in 1:max_duration
+            dp_buffer[d, i] = logdensityof(durs[i], d)
+        end
+    end
+    return nothing
 end
 
 function _forward!(
@@ -55,6 +72,7 @@ function _forward!(
 ) where {R}
     (; log_α, logL, cum_log_obs, max_duration) = storage
     dp_buffer = storage.dp_buffer[k]
+    incoming_log_prob = storage.incoming_log_prob[k]
     t1, t2 = seq_limits(seq_ends, k)
     N = length(hsmm)
 
@@ -70,22 +88,10 @@ function _forward!(
         end
     end
 
-    # Helper: refresh dp_buffer with the duration log-pmfs for segments starting at t_start.
-    # Called once per segment start so that controlled HSMMs whose duration distributions
-    # depend on the control at the start of the sojourn are handled correctly.
-    @inline function fill_dp_buffer!(t_start::Int)
-        durs = duration_distributions(hsmm, control_seq[t_start])
-        for i in 1:N
-            for d in 1:max_duration
-                dp_buffer[d, i] = logdensityof(durs[i], d)
-            end
-        end
-    end
-
     log_init = log_initialization(hsmm)
 
     # Initial segments (start at t1)
-    fill_dp_buffer!(t1)
+    _fill_dp_buffer!(dp_buffer, hsmm, control_seq[t1], max_duration, N)
     for i in 1:N
         for d in 1:min(max_duration, t2 - t1 + 1)
             t_end = t1 + d - 1
@@ -101,7 +107,8 @@ function _forward!(
         log_trans = log_transition_matrix(hsmm, control_seq[t + 1])
 
         # Incoming log-prob into state j given that some other state ended at t.
-        incoming_log_prob = fill(typemin(R), N)
+        # Reuse a pre-allocated buffer to keep the hot loop allocation-free.
+        fill!(incoming_log_prob, typemin(R))
         has_valid_path = false
         for j in 1:N
             log_sum_prev = typemin(R)
@@ -120,7 +127,7 @@ function _forward!(
             continue
         end
 
-        fill_dp_buffer!(t + 1)
+        _fill_dp_buffer!(dp_buffer, hsmm, control_seq[t + 1], max_duration, N)
         remaining_time = t2 - t
         for d in 1:min(max_duration, remaining_time)
             t_end = t + d

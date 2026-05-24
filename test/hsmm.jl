@@ -71,9 +71,8 @@ end
 ## duration distributions
 
 # Our minimal duration-distribution interface only requires logdensityof, rand, fit!.
-# These tests target the contract — sum-to-(close-to-)one over a wide range,
-# support on positive integers, sample mean close to mean implied by parameters,
-# and weighted-mean recovery via fit!.
+# These tests target support on positive integers, sample mean close to mean implied 
+# by parameters, and weighted-mean recovery via fit!.
 
 function _expected_mean(d::GeometricDuration)
     return 1 / d.p
@@ -579,7 +578,8 @@ end
         # posterior. Viterbi gives the q that maximises joint logL, so its joint logL
         # should be ≤ the marginal logdensityof (which sums over all paths).
         hsmm = HSMM(
-            [0.5, 0.5], [0.0 1.0; 1.0 0.0],
+            [0.5, 0.5],
+            [0.0 1.0; 1.0 0.0],
             [Normal(-2.0, 1.0), Normal(2.0, 1.0)],
             [PoissonDuration(3.0), PoissonDuration(3.0)],
         )
@@ -596,7 +596,8 @@ end
         # State sequence with an apparent transition 1->1 isn't representable in an HSMM
         # (zero-diagonal transition matrix); the joint should be -Inf.
         hsmm = HSMM(
-            [0.5, 0.5], [0.0 1.0; 1.0 0.0],
+            [0.5, 0.5],
+            [0.0 1.0; 1.0 0.0],
             [Normal(-2.0, 1.0), Normal(2.0, 1.0)],
             [PoissonDuration(3.0), PoissonDuration(3.0)],
         )
@@ -607,7 +608,8 @@ end
 
     @testset "Multi-sequence sums per-sequence joint logL" begin
         hsmm = HSMM(
-            [0.5, 0.5], [0.0 1.0; 1.0 0.0],
+            [0.5, 0.5],
+            [0.0 1.0; 1.0 0.0],
             [Normal(-2.0, 1.0), Normal(2.0, 1.0)],
             [PoissonDuration(3.0), PoissonDuration(3.0)],
         )
@@ -618,9 +620,7 @@ end
         sep2 = joint_logdensityof(hsmm, sim2.obs_seq, sim2.state_seq)
         cat_obs = vcat(sim1.obs_seq, sim2.obs_seq)
         cat_state = vcat(sim1.state_seq, sim2.state_seq)
-        combined = joint_logdensityof(
-            hsmm, cat_obs, cat_state; seq_ends=(100, 250)
-        )
+        combined = joint_logdensityof(hsmm, cat_obs, cat_state; seq_ends=(100, 250))
         @test combined ≈ sep1 + sep2
     end
 end
@@ -653,7 +653,7 @@ end
     )
 
     @testset "Forward log-likelihood differs under different controls" begin
-        # An obs sequence that's consistent with LONG sojourns should be more likely
+        # An obs sequence that's consistent with long sojourns should be more likely
         # under control=2 (long durations) than control=1 (short).
         obs_long = vcat(fill(-2.0, 8), fill(2.0, 8))  # 2 sojourns of length 8
         ctrl_short = fill(1, 16)
@@ -664,10 +664,6 @@ end
     end
 
     @testset "Per-t_start control: within-sequence variation matters" begin
-        # A 14-step obs sequence with TWO 7-step sojourns. If durations are looked up
-        # only at t=1 (the old buggy behavior), changing the control mid-sequence has
-        # no effect. With per-t_start lookup, swapping the control between sojourns
-        # should change the likelihood.
         obs = vcat(fill(-2.0, 7), fill(2.0, 7))
         # Both sojourns under control=2 (long durations expected)
         ctrl_all_long = fill(2, 14)
@@ -688,5 +684,65 @@ end
         γ, logL_fb = forward_backward(h, obs, ctrl; max_duration=20)
         @test logL_f ≈ logL_fb
         @test all(isapprox.(sum(γ; dims=1), 1.0; atol=1e-6))
+    end
+end
+
+## Automatic differentiation
+
+@testset "Automatic differentiation" begin
+    using ForwardDiff
+    using Zygote
+
+    # Custom HSMM whose parameters are flat scalars so we can drive AD over them.
+    struct ADHSMM{V,M,VD,VDur} <: AbstractHSMM
+        init::V
+        trans::M
+        dists::VD
+        durations::VDur
+    end
+    HiddenMarkovModels.initialization(h::ADHSMM) = h.init
+    HiddenMarkovModels.transition_matrix(h::ADHSMM) = h.trans
+    HiddenMarkovModels.obs_distributions(h::ADHSMM) = h.dists
+    HiddenMarkovModels.duration_distributions(h::ADHSMM) = h.durations
+    Base.length(h::ADHSMM) = length(h.init)
+
+    sim_obs = [-3.0, -2.9, -3.1, 3.0, 2.9, 3.1, -3.0, -3.1]
+
+    @testset "ForwardDiff: full gradient (init + dists + durations)" begin
+        function nll_full(p)
+            h = ADHSMM(
+                [p[1], 1 - p[1]],
+                [0.0 1.0; 1.0 0.0],
+                [Normal(p[2], 0.5), Normal(p[3], 0.5)],
+                [PoissonDuration(p[4]), PoissonDuration(p[5])],
+            )
+            return -logdensityof(h, sim_obs)
+        end
+        g = ForwardDiff.gradient(nll_full, [0.5, -3.0, 3.0, 3.0, 3.0])
+        @test all(isfinite, g)
+        @test length(g) == 5
+        # Hand-computed ground truth at this configuration (high SNR, "obvious" decoding):
+        #   ∂nll/∂λ_1 = +1.0  (η[2,1]=η[3,1]=1, ∂poislogpdf(λ=3,d-1)/∂λ = -1+(d-1)/3)
+        #   ∂nll/∂λ_2 = +1/3 (η[3,2]=1 only)
+        @test isapprox(g[4], 1.0; atol=1e-6)
+        @test isapprox(g[5], 1 / 3; atol=1e-6)
+    end
+
+    @testset "Zygote rrule: matches ForwardDiff on init + dists" begin
+        # The rrule intentionally skips the duration block (mutable-struct gradient
+        # bug in Zygote). Drive AD over only init + dists and check Zygote ≈ FD.
+        function nll_no_dur(p)
+            h = ADHSMM(
+                [p[1], 1 - p[1]],
+                [0.0 1.0; 1.0 0.0],
+                [Normal(p[2], 0.5), Normal(p[3], 0.5)],
+                [PoissonDuration(3.0), PoissonDuration(3.0)],
+            )
+            return -logdensityof(h, sim_obs)
+        end
+        p0 = [0.5, -3.0, 3.0]
+        g_fd = ForwardDiff.gradient(nll_no_dur, p0)
+        g_zy = Zygote.gradient(nll_no_dur, p0)[1]
+        @test isapprox(g_fd, g_zy; atol=1e-6)
     end
 end

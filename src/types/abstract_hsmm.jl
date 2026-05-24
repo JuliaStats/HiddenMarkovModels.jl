@@ -27,12 +27,6 @@ Any `AbstractHSMM` which satisfies the interface can be given to the following f
 - [`viterbi`](@ref)
 - [`forward_backward`](@ref)
 - [`baum_welch`](@ref) (if `fit!` is implemented)
-
-!!! note
-    `AbstractHSMM` is intentionally **not** a subtype of [`AbstractHMM`](@ref). Although every HMM is
-    mathematically an HSMM with geometric durations, making `AbstractHSMM <: AbstractHMM` would cause
-    HMM-only methods (which ignore duration distributions) to silently dispatch on HSMMs and produce
-    incorrect results. Sibling supertypes keep dispatch explicit.
 """
 abstract type AbstractHSMM end
 
@@ -87,6 +81,7 @@ obs_distributions(hsmm::AbstractHSMM, ::Nothing) = obs_distributions(hsmm)
 duration_distributions(hsmm::AbstractHSMM, ::Nothing) = duration_distributions(hsmm)
 
 log_initialization(hsmm::AbstractHSMM) = elementwise_log(initialization(hsmm))
+log_transition_matrix(hsmm::AbstractHSMM) = elementwise_log(transition_matrix(hsmm))
 
 function log_transition_matrix(hsmm::AbstractHSMM, control)
     return elementwise_log(transition_matrix(hsmm, control))
