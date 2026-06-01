@@ -12,26 +12,60 @@ jobs:
       contents: read
       pull-requests: write
     if: contains(github.event.pull_request.labels.*.name, 'run benchmark')
+    env:
+      JULIA_NUM_THREADS: auto
+      OPENBLAS_NUM_THREADS: "1"
     steps:
-      - uses: actions/checkout@v2
-      - uses: julia-actions/setup-julia@latest
+      - uses: actions/checkout@v4
         with:
-          version: 1
-      - uses: julia-actions/julia-buildpkg@latest
-      - name: Install dependencies
-        run: julia -e 'using Pkg; pkg"add PkgBenchmark BenchmarkCI@0.1"'
+          fetch-depth: 0
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1"
+      - uses: julia-actions/cache@v2
+
+      - name: Install AirspeedVelocity
+        run: |
+          julia -e 'using Pkg; Pkg.add(name="AirspeedVelocity", version="0.6"); Pkg.build("AirspeedVelocity")'
+          echo "$HOME/.julia/bin" >> "$GITHUB_PATH"
+
       - name: Run benchmarks
         run: |
-          julia -e '
-            using BenchmarkCI, PkgBenchmark
-            config = BenchmarkConfig(env=Dict(
-              "JULIA_NUM_THREADS" => "auto",
-              "OPENBLAS_NUM_THREADS" => 1,
-            ))
-            BenchmarkCI.judge(baseline="origin/main", target=config)'
-      - name: Print judgement
-        run: julia -e 'using BenchmarkCI; BenchmarkCI.displayjudgement()'
-      - name: Comment judgement
-        run: julia -e 'using BenchmarkCI; BenchmarkCI.postjudge()'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          mkdir -p results
+          benchpkg HiddenMarkovModels \
+            --rev=${{ github.event.repository.default_branch }},${{ github.event.pull_request.head.sha }} \
+            --bench-on=${{ github.event.pull_request.head.sha }} \
+            --output-dir=results/ \
+            --tune
+
+      - name: Build markdown comparison table
+        run: |
+          benchpkgtable HiddenMarkovModels \
+            --rev=${{ github.event.repository.default_branch }},${{ github.event.pull_request.head.sha }} \
+            --input-dir=results/ > table.md
+          printf '### Benchmark Results\n\nBaseline `%s` vs target `%s` (estimator = median, ratios from `benchpkgtable`).\n\n' \
+            "${{ github.event.repository.default_branch }}" \
+            "${{ github.event.pull_request.head.sha }}" > body.md
+          cat table.md >> body.md
+
+      - name: Upload raw results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: results/
+
+      - name: Find existing benchmark comment
+        uses: peter-evans/find-comment@v3
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "Benchmark Results"
+
+      - name: Post benchmark comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: body.md
+          edit-mode: replace
