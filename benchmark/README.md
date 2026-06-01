@@ -33,9 +33,11 @@ julia --project=benchmark benchmark/run.jl main      # writes main.json, main.cs
 
 ## Regression workflow via AirspeedVelocity
 
-`benchpkg` runs the benchmark suite against two revisions of the package and
-`benchpkgtable` produces a markdown comparison table. This is what the CI
-workflow does, and you can reproduce it locally:
+CI uses the [`MilesCranmer/AirspeedVelocity.jl@action-v1`](https://github.com/MilesCranmer/AirspeedVelocity.jl)
+composite action, which runs `benchpkg` against the default branch and the PR
+head and posts a `benchpkgtable` comparison as a PR comment.
+
+To reproduce locally:
 
 ```bash
 julia -e 'using Pkg; Pkg.add(name="AirspeedVelocity", version="0.6"); Pkg.build("AirspeedVelocity")'
@@ -50,13 +52,12 @@ benchpkg HiddenMarkovModels \
 
 benchpkgtable HiddenMarkovModels \
   --rev=main,HEAD \
-  --input-dir=results/
+  --input-dir=results/ \
+  --mode=time --ratio
 ```
 
 `--bench-on=HEAD` forces both runs to use the current branch's
-`benchmark/benchmarks.jl`, which avoids issues if the suite definition changed.
-Run both measurements on the same machine, with the same thread count, and
-ideally with nothing else competing for CPU.
+`benchmark/benchmarks.jl`.
 
 ## Manual `judge` workflow
 
