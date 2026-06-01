@@ -37,7 +37,16 @@ CI uses the [`MilesCranmer/AirspeedVelocity.jl@action-v1`](https://github.com/Mi
 composite action, which runs `benchpkg` against the default branch and the PR
 head and posts a `benchpkgtable` comparison as a PR comment.
 
-To reproduce locally:
+The workflow invokes [`benchmark/ci_benchmarks.jl`](ci_benchmarks.jl) as the
+`script:` input rather than the default `benchmarks.jl`. That wrapper
+`Pkg.develop`s [`../libs/HMMBenchmark`](../libs/HMMBenchmark) from the
+checked-out PR head before including `benchmarks.jl`, which means **both
+benchmarked revisions use the PR-head version of the suite-builder**. PRs
+that modify `libs/HMMBenchmark` exercise their own changes, and the workload
+stays identical across the baseline and target runs so the diff attributes
+cleanly to `HiddenMarkovModels` itself.
+
+To reproduce locally with `benchpkg`:
 
 ```bash
 julia -e 'using Pkg; Pkg.add(name="AirspeedVelocity", version="0.6"); Pkg.build("AirspeedVelocity")'
@@ -46,7 +55,8 @@ export PATH="$HOME/.julia/bin:$PATH"
 mkdir -p results
 benchpkg HiddenMarkovModels \
   --rev=main,HEAD \
-  --bench-on=HEAD \
+  --script=benchmark/ci_benchmarks.jl \
+  --add=StableRNGs \
   --output-dir=results/ \
   --tune
 
@@ -55,9 +65,6 @@ benchpkgtable HiddenMarkovModels \
   --input-dir=results/ \
   --mode=time --ratio
 ```
-
-`--bench-on=HEAD` forces both runs to use the current branch's
-`benchmark/benchmarks.jl`.
 
 ## Manual `judge` workflow
 
