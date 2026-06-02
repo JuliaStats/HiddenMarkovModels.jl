@@ -65,7 +65,6 @@ function StatsAPI.fit!(
     return nothing
 end
 
-
 # Log-space Knuth: stable for λ values where exp(-λ) would underflow. O(λ) expected time
 # is acceptable for HSMM sojourns; durations rarely have λ > 100.
 function _poisson_rand(rng::AbstractRNG, λ::Real)
@@ -217,7 +216,7 @@ function StatsAPI.fit!(
             sum_psi += weights[i] * digamma(k + r)
             sum_trig += weights[i] * trigamma(k + r)
         end
-        
+
         # g(r) = ∂ℓ_profile/∂r = Σ ψ(k+r) - Wψ(r) + W log p*(r), and
         # log p*(r) = log(Wr/(Wr+S)) = log W + log r - log(Wr+S).
         g = sum_psi - W * digamma(r) + W * log(r) + W * logW - W * log(W * r + S)
