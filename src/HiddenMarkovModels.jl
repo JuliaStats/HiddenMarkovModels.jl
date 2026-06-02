@@ -19,10 +19,12 @@ using FillArrays: Fill
 using LinearAlgebra: Transpose, axpy!, dot, ldiv!, lmul!, mul!, parent
 using Random: Random, AbstractRNG, default_rng
 using SparseArrays: AbstractSparseArray, SparseMatrixCSC, nonzeros, nnz, nzrange, rowvals
+using SpecialFunctions: trigamma
 using StatsAPI: StatsAPI, fit, fit!
-using StatsFuns: log2π
+using StatsFuns: log2π, digamma, nbinomlogpdf, poislogpdf
 
 export AbstractHMM, HMM
+export AbstractDurationDistribution, GeometricDuration, PoissonDuration, NegBinomialDuration
 export initialization, transition_matrix, obs_distributions
 export fit!, logdensityof, joint_logdensityof
 export viterbi, forward, forward_backward, baum_welch
@@ -47,5 +49,6 @@ include("inference/logdensity.jl")
 include("inference/chainrules.jl")
 
 include("types/hmm.jl")
+include("types/duration_distribution.jl")
 
 end

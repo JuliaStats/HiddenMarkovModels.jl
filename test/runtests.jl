@@ -76,4 +76,8 @@ end
     @testset verbose = true "Miscellaneous" begin
         include("misc.jl")
     end
+
+    @testset verbose = true "Duration distributions" begin
+        include("duration.jl")
+    end
 end
