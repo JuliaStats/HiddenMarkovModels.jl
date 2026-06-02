@@ -36,6 +36,17 @@ transition_matrix
 obs_distributions
 ```
 
+## Duration distributions
+
+Per-state sojourn-time distributions live on the positive integers `{1, 2, 3, ...}` and form their own small type hierarchy. They are decoupled from `Distributions.jl` so that downstream models do not require it as a dependency.
+
+```@docs
+AbstractDurationDistribution
+GeometricDuration
+PoissonDuration
+NegBinomialDuration
+```
+
 ## Utils
 
 ```@docs

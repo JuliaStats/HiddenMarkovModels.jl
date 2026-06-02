@@ -1,9 +1,9 @@
 """
     AbstractDurationDistribution
 
-Abstract supertype for the per-state sojourn-time distributions used in [`AbstractHSMM`](@ref).
-The support is the positive integers `{1, 2, 3, ...}` — a duration of `k` means the state is held
-for `k` consecutive timesteps before transitioning.
+Abstract supertype for per-state sojourn-time (duration) distributions, as used by hidden
+semi-Markov models. The support is the positive integers `{1, 2, 3, ...}` — a duration of `k`
+means the state is held for `k` consecutive timesteps before transitioning.
 
 # Interface
 
