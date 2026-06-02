@@ -12,26 +12,17 @@ jobs:
       contents: read
       pull-requests: write
     if: contains(github.event.pull_request.labels.*.name, 'run benchmark')
+    env:
+      JULIA_NUM_THREADS: auto
+      OPENBLAS_NUM_THREADS: "1"
     steps:
-      - uses: actions/checkout@v2
-      - uses: julia-actions/setup-julia@latest
+      - uses: MilesCranmer/AirspeedVelocity.jl@action-v1
         with:
-          version: 1
-      - uses: julia-actions/julia-buildpkg@latest
-      - name: Install dependencies
-        run: julia -e 'using Pkg; pkg"add PkgBenchmark BenchmarkCI@0.1"'
-      - name: Run benchmarks
-        run: |
-          julia -e '
-            using BenchmarkCI, PkgBenchmark
-            config = BenchmarkConfig(env=Dict(
-              "JULIA_NUM_THREADS" => "auto",
-              "OPENBLAS_NUM_THREADS" => 1,
-            ))
-            BenchmarkCI.judge(baseline="origin/main", target=config)'
-      - name: Print judgement
-        run: julia -e 'using BenchmarkCI; BenchmarkCI.displayjudgement()'
-      - name: Comment judgement
-        run: julia -e 'using BenchmarkCI; BenchmarkCI.postjudge()'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          julia-version: "1"
+          tune: "true"
+          # Use the wrapper script so both benchmarked revisions dev the
+          # PR-head version of libs/HMMBenchmark. See benchmark/ci_benchmarks.jl.
+          script: benchmark/ci_benchmarks.jl
+          # benchmarks.jl uses StableRNGs directly; benchpkg's tmp_env only
+          # includes BenchmarkTools/JSON3/Pkg/TOML by default, so add it here.
+          extra-pkgs: StableRNGs
