@@ -84,7 +84,8 @@ At inference time, `obs_distributions(hmm, control)` returns a lazy
 standard `logdensityof(dist, obs)` / `rand(rng, dist)` interface expected by the inference
 algorithms.
 
-`nothing` is not a valid control value; use [`HMM`](@ref) for uncontrolled models.
+A `nothing` control is forwarded to the emissions like any other control value; for
+genuinely uncontrolled models, prefer [`HMM`](@ref).
 
 $(TYPEDFIELDS)
 """
@@ -153,20 +154,13 @@ function valid_hmm(hmm::ControlledEmissionHMM)
     return true
 end
 
-#=
-ControlledEmissionHMM always requires a real control value. This error is needed for dispatch i.e., otherwise there is a method ambiguity.
-=#
-function obs_distributions(hmm::ControlledEmissionHMM, ::Nothing)
-    throw(
-        ArgumentError(
-            "ControlledEmissionHMM requires a control value; `nothing` is not valid."
-        ),
-    )
-end
-
 # Returns a lazy ControlBoundEmissionVector:
 # each element is bound to `control` and responds to logdensityof(dist, obs) / rand(rng, dist)
 function obs_distributions(hmm::ControlledEmissionHMM, control)
+    ControlBoundEmissionVector(hmm.dists, control)
+end
+
+function obs_distributions(hmm::ControlledEmissionHMM, control::Nothing)
     ControlBoundEmissionVector(hmm.dists, control)
 end
 Base.length(hmm::ControlledEmissionHMM) = length(hmm.dists)

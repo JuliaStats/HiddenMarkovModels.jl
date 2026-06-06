@@ -55,11 +55,9 @@ end
     @test controlled_dists[1] isa ControlBoundEmission
     @test logdensityof(controlled_dists[1], 3.0) == -1.0
 
-    err = thrown_error() do
-        obs_distributions(hmm, nothing)
-    end
-    @test err isa ArgumentError
-    @test occursin("requires a control value", sprint(showerror, err))
+    nothing_dists = obs_distributions(hmm, nothing)
+    @test nothing_dists isa ControlBoundEmissionVector
+    @test nothing_dists[1] isa ControlBoundEmission
 
     err = thrown_error() do
         rand(hmm, 3)
