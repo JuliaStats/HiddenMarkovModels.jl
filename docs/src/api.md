@@ -114,7 +114,8 @@ HiddenMarkovModels.log_transition_matrix
 HiddenMarkovModels.mul_rows_cols!
 HiddenMarkovModels.argmaxplus_transmul!
 ControlledEmission
-ControlledEmissions
+ControlBoundEmission
+ControlBoundEmissionVector
 ```
 
 ## Index

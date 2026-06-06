@@ -155,13 +155,11 @@ if TEST_SUITE != "HMMBase"
         using DensityInterface
         using StatsAPI
 
-        mutable struct GLMNormalModel{T}
+        mutable struct GLMNormalModel{T} <: ControlledEmission
             β0::T
             β1::T
             logσ::T
         end
-
-        DensityInterface.DensityKind(::GLMNormalModel) = DensityInterface.HasDensity()
 
         # Control-aware logdensity: accept any Real types and promote
         function DensityInterface.logdensityof(

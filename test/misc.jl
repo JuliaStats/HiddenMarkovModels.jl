@@ -9,9 +9,9 @@ using Random: Random, AbstractRNG, Xoshiro
 using Test
 using Test: TestLogger
 
-struct TestControlledEmissionDist end
+struct TestControlledEmissionDist <: ControlledEmission end
 
-DensityInterface.DensityKind(::TestControlledEmissionDist) = DensityInterface.HasDensity()
+# `DensityKind` is inherited from the `ControlledEmission` abstract supertype.
 function DensityInterface.logdensityof(::TestControlledEmissionDist, obs, control)
     return -(obs - control)^2
 end
@@ -51,8 +51,8 @@ end
     @test HMMs.log_transition_matrix(hmm, nothing) === hmm.logtrans
 
     controlled_dists = obs_distributions(hmm, 2.0)
-    @test controlled_dists isa ControlledEmissions
-    @test controlled_dists[1] isa ControlledEmission
+    @test controlled_dists isa ControlBoundEmissionVector
+    @test controlled_dists[1] isa ControlBoundEmission
     @test logdensityof(controlled_dists[1], 3.0) == -1.0
 
     err = thrown_error() do
@@ -87,15 +87,18 @@ end
     @test occursin("fit!(hmm, fb_storage, obs_seq, control_seq", sprint(showerror, err))
 end
 
-@testset "ControlledEmission DensityKind and ControlledEmissions eltype" begin
+@testset "ControlBoundEmission DensityKind and ControlBoundEmissionVector eltype" begin
     dist = TestControlledEmissionDist()
-    ce = ControlledEmission(dist, 1.5)
+    # `DensityKind` is provided by the `ControlledEmission` abstract supertype.
+    @test DensityInterface.DensityKind(dist) === DensityInterface.HasDensity()
+
+    ce = ControlBoundEmission(dist, 1.5)
     @test DensityInterface.DensityKind(ce) === DensityInterface.HasDensity()
 
     dists = [TestControlledEmissionDist(), TestControlledEmissionDist()]
-    ces = ControlledEmissions(dists, 2.5)
-    @test eltype(ces) === ControlledEmission{TestControlledEmissionDist,Float64}
-    @test eltype(typeof(ces)) === ControlledEmission{TestControlledEmissionDist,Float64}
+    ces = ControlBoundEmissionVector(dists, 2.5)
+    @test eltype(ces) === ControlBoundEmission{TestControlledEmissionDist,Float64}
+    @test eltype(typeof(ces)) === ControlBoundEmission{TestControlledEmissionDist,Float64}
 end
 
 @testset "ControlledEmissionHMM constructor rejects invalid inputs" begin

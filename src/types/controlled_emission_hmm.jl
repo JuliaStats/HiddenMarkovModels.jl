@@ -1,64 +1,88 @@
 """
 $(TYPEDEF)
 
-A single emission distribution bound to a specific control value.
-Wraps a control-aware distribution and a control value, exposing
-the standard `logdensityof(ce, obs)` and `rand(rng, ce)` interface.
+Abstract supertype for control-aware emission distributions used by
+[`ControlledEmissionHMM`](@ref).
+
+A concrete subtype `D <: ControlledEmission` describes an emission whose density,
+sampling and fitting all depend on an external control value. It must implement the three
+non-standard, control-aware methods:
+
+- `DensityInterface.logdensityof(d::D, obs, control)` for inference
+- `Random.rand(rng::AbstractRNG, d::D, control)` for sampling
+- `StatsAPI.fit!(d::D, obs_seq, control_seq, weights)` for learning
+
+Subtyping `ControlledEmission` makes these requirements explicit and provides
+`DensityInterface.DensityKind(::D) = HasDensity()` automatically.
+"""
+abstract type ControlledEmission end
+
+DensityInterface.DensityKind(::ControlledEmission) = HasDensity()
+
+"""
+$(TYPEDEF)
+
+A single [`ControlledEmission`](@ref) bound to a specific control value. Wraps a
+control-aware emission together with one control, exposing the standard
+`logdensityof(_, obs)` and `rand(rng, _)` interface expected by the inference algorithms.
 
 $(TYPEDFIELDS)
 """
-struct ControlledEmission{D,C}
-    "Control-aware emission distribution. Must support the non-standard signatures
-    `logdensityof(dist, obs, control)` and `rand(rng, dist, control)`."
+struct ControlBoundEmission{D<:ControlledEmission,C}
+    "Control-aware emission distribution (a [`ControlledEmission`](@ref) subtype)."
     dist::D
     "The control value bound to this emission; passed as the third argument to
     `logdensityof` and `rand`."
     control::C
 end
 
-DensityInterface.DensityKind(::ControlledEmission) = HasDensity()
-function DensityInterface.logdensityof(ce::ControlledEmission, obs)
+DensityInterface.DensityKind(::ControlBoundEmission) = HasDensity()
+function DensityInterface.logdensityof(ce::ControlBoundEmission, obs)
     logdensityof(ce.dist, obs, ce.control)
 end
-Random.rand(rng::AbstractRNG, ce::ControlledEmission) = rand(rng, ce.dist, ce.control)
+Random.rand(rng::AbstractRNG, ce::ControlBoundEmission) = rand(rng, ce.dist, ce.control)
 
 """
 $(TYPEDEF)
 
-A lazy vector of [`ControlledEmission`](@ref) wrappers, pairing each distribution in `dists`
-with the same `control` value. No allocation occurs until individual elements are accessed.
+A lazy vector pairing each [`ControlledEmission`](@ref) in `dists` with the same `control`
+value, yielding [`ControlBoundEmission`](@ref) elements. No allocation occurs until
+individual elements are accessed.
 
-This is returned by `obs_distributions(hmm::ControlledEmissionHMM, control::C)` so that the
-standard `obs_distributions(hmm, control)` contract is satisfied: the returned distributions
-are already bound to `control` and respond to `logdensityof(dist, obs)` and `rand(rng, dist)`.
+This is returned by `obs_distributions(hmm::ControlledEmissionHMM, control)` so that the
+standard contract is satisfied: the returned distributions are already bound to `control`
+and respond to `logdensityof(dist, obs)` and `rand(rng, dist)`.
 
 $(TYPEDFIELDS)
 """
-struct ControlledEmissions{D,VD<:AbstractVector{D},C} <:
-       AbstractVector{ControlledEmission{D,C}}
-    "Vector of control-aware emission distributions. Each element must support
-    `logdensityof(dist, obs, control)` and `rand(rng, dist, control)`."
+struct ControlBoundEmissionVector{D<:ControlledEmission,VD<:AbstractVector{D},C} <:
+       AbstractVector{ControlBoundEmission{D,C}}
+    "Vector of control-aware emission distributions ([`ControlledEmission`](@ref) subtypes)."
     dists::VD
     "The control value shared across all emissions; passed to each wrapped distribution."
     control::C
 end
 
-Base.size(ce::ControlledEmissions) = size(ce.dists)
-Base.eltype(::Type{ControlledEmissions{D,VD,C}}) where {D,VD,C} = ControlledEmission{D,C}
-Base.getindex(ce::ControlledEmissions, i::Int) = ControlledEmission(ce.dists[i], ce.control)
+Base.size(ce::ControlBoundEmissionVector) = size(ce.dists)
+function Base.eltype(::Type{ControlBoundEmissionVector{D,VD,C}}) where {D,VD,C}
+    return ControlBoundEmission{D,C}
+end
+function Base.getindex(ce::ControlBoundEmissionVector, i::Int)
+    return ControlBoundEmission(ce.dists[i], ce.control)
+end
 
 """
 $(TYPEDEF)
 
 An [`AbstractHMM`](@ref) where control variables affect only the emission distributions,
 not the transition dynamics. The `init` and `trans` fields are control-independent;
-each element of `dists` must be a control-aware distribution supporting the non-standard
-signatures `logdensityof(dist, obs, control)` and `rand(rng, dist, control)`.
+each element of `dists` must be a [`ControlledEmission`](@ref) subtype, supporting the
+non-standard signatures `logdensityof(dist, obs, control)` and `rand(rng, dist, control)`.
 
 At inference time, `obs_distributions(hmm, control)` returns a lazy
-[`ControlledEmissions`](@ref) vector that binds each raw distribution to `control`,
-exposing the standard `logdensityof(dist, obs)` / `rand(rng, dist)` interface expected
-by the inference algorithms.
+[`ControlBoundEmissionVector`](@ref) that binds each emission to `control`, exposing the
+standard `logdensityof(dist, obs)` / `rand(rng, dist)` interface expected by the inference
+algorithms.
 
 `nothing` is not a valid control value; use [`HMM`](@ref) for uncontrolled models.
 
@@ -67,7 +91,7 @@ $(TYPEDFIELDS)
 struct ControlledEmissionHMM{
     V<:AbstractVector,
     M<:AbstractMatrix,
-    VD<:AbstractVector,
+    VD<:AbstractVector{<:ControlledEmission},
     Vl<:AbstractVector,
     Ml<:AbstractMatrix,
 } <: AbstractHMM
@@ -75,8 +99,8 @@ struct ControlledEmissionHMM{
     init::V
     "state transition probabilities (control-independent)"
     trans::M
-    "control-aware emission distributions; each element must support
-    `logdensityof(dist, obs, control)` and `rand(rng, dist, control)`"
+    "control-aware emission distributions; each is a [`ControlledEmission`](@ref) subtype
+    supporting `logdensityof(dist, obs, control)` and `rand(rng, dist, control)`"
     dists::VD
     "logarithms of initial state probabilities"
     loginit::Vl
@@ -84,7 +108,9 @@ struct ControlledEmissionHMM{
     logtrans::Ml
 
     function ControlledEmissionHMM(
-        init::AbstractVector, trans::AbstractMatrix, dists::AbstractVector
+        init::AbstractVector,
+        trans::AbstractMatrix,
+        dists::AbstractVector{<:ControlledEmission},
     )
         log_init = elementwise_log(init)
         log_trans = elementwise_log(trans)
@@ -138,10 +164,10 @@ function obs_distributions(hmm::ControlledEmissionHMM, ::Nothing)
     )
 end
 
-# Returns a lazy ControlledEmissions vector:
+# Returns a lazy ControlBoundEmissionVector:
 # each element is bound to `control` and responds to logdensityof(dist, obs) / rand(rng, dist)
 function obs_distributions(hmm::ControlledEmissionHMM, control)
-    ControlledEmissions(hmm.dists, control)
+    ControlBoundEmissionVector(hmm.dists, control)
 end
 Base.length(hmm::ControlledEmissionHMM) = length(hmm.dists)
 

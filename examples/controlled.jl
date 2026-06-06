@@ -159,24 +159,22 @@ When **only the emissions depend on the control**, the package ships [`Controlle
 # ### Defining a control-aware emission
 
 #=
-Each emission `d` must implement three "non-standard" three-argument methods:
+Each emission subtypes [`ControlledEmission`](@ref) and must implement three "non-standard" three-argument methods:
 
-- `DensityInterface.logdensityof(d, obs, control)` — for inference
-- `Random.rand(rng, d, control)` — for sampling
-- `StatsAPI.fit!(d, obs_seq, control_seq, weights)` — for learning
+- `DensityInterface.logdensityof(d, obs, control)` for inference
+- `Random.rand(rng, d, control)` for sampling
+- `StatsAPI.fit!(d, obs_seq, control_seq, weights)` for learning
 
-At inference time, `obs_distributions(hmm, control)` wraps each raw distribution into a [`ControlledEmission`](@ref) bound to `control`, so the inner inference loops keep using the standard two-argument `logdensityof(dist, obs)` / `rand(rng, dist)` interface.
+Subtyping [`ControlledEmission`](@ref) documents the interface and provides `DensityKind` automatically. At inference time, `obs_distributions(hmm, control)` wraps each emission into a [`ControlBoundEmission`](@ref) bound to `control`, so the inner inference loops keep using the standard two-argument `logdensityof(dist, obs)` / `rand(rng, dist)` interface.
 
 To mirror the example above, we define a Gaussian whose mean is linear in a scalar control:
 =#
 
-mutable struct LinearGaussian{T}
+mutable struct LinearGaussian{T} <: ControlledEmission
     β0::T
     β1::T
     logσ::T
 end
-
-DensityInterface.DensityKind(::LinearGaussian) = HasDensity()
 
 function DensityInterface.logdensityof(d::LinearGaussian, obs::Real, control::Real)
     μ = d.β0 + d.β1 * control
@@ -190,22 +188,32 @@ function Random.rand(rng::AbstractRNG, d::LinearGaussian, control::Real)
     return μ + σ * randn(rng)
 end
 
+#=
+The `fit!` method below performs a weighted maximum-likelihood update, where the weights
+are the state posteriors $\gamma_t$ supplied by Baum-Welch.
+Maximizing the weighted Gaussian log-likelihood over $(\beta_0, \beta_1)$ is an ordinary
+weighted least squares problem: writing $S_k = \sum_t \gamma_t u_t^k$ and
+$T_k = \sum_t \gamma_t u_t^k y_t$, the normal equations have the closed-form solution used
+below, with $\Delta = S_0 S_2 - S_1^2$. Given those coefficients, the variance estimate is
+the weighted mean of the squared residuals, $\sigma^2 = \frac{1}{S_0} \sum_t \gamma_t (y_t - \mu_t)^2$.
+=#
+
 function StatsAPI.fit!(
     d::LinearGaussian,
     obs_seq::AbstractVector{<:Real},
     control_seq::AbstractVector{<:Real},
     weights::AbstractVector{<:Real},
 )
-    S0 = sum(weights)
-    S1 = sum(weights .* control_seq)
-    S2 = sum(weights .* control_seq .^ 2)
-    T0 = sum(weights .* obs_seq)
-    T1 = sum(weights .* control_seq .* obs_seq)
-    Δ = S0 * S2 - S1^2
-    d.β0 = (T0 * S2 - T1 * S1) / Δ
-    d.β1 = (T1 * S0 - T0 * S1) / Δ
-    sse = sum(weights .* (obs_seq .- (d.β0 .+ d.β1 .* control_seq)) .^ 2)
-    d.logσ = log(sqrt(sse / S0))
+    S0 = sum(weights)                            # S₀ = Σₜ γₜ
+    S1 = sum(weights .* control_seq)             # S₁ = Σₜ γₜ·uₜ
+    S2 = sum(weights .* control_seq .^ 2)        # S₂ = Σₜ γₜ·uₜ²
+    T0 = sum(weights .* obs_seq)                 # T₀ = Σₜ γₜ·yₜ
+    T1 = sum(weights .* control_seq .* obs_seq)  # T₁ = Σₜ γₜ·uₜ·yₜ
+    Δ = S0 * S2 - S1^2                           # Δ  = S₀·S₂ - S₁²  (determinant of the normal equations)
+    d.β0 = (T0 * S2 - T1 * S1) / Δ               # β₀ = (T₀·S₂ - T₁·S₁) / Δ
+    d.β1 = (T1 * S0 - T0 * S1) / Δ               # β₁ = (T₁·S₀ - T₀·S₁) / Δ
+    sse = sum(weights .* (obs_seq .- (d.β0 .+ d.β1 .* control_seq)) .^ 2)  # SSE = Σₜ γₜ·(yₜ - μₜ)²
+    d.logσ = log(sqrt(sse / S0))                 # logσ = ½·log(SSE / S₀)
     return d
 end
 
