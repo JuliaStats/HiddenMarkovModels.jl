@@ -38,13 +38,13 @@ obs_distributions
 
 ## Duration distributions
 
-Per-state sojourn-time distributions live on the positive integers `{1, 2, 3, ...}` and form their own small type hierarchy. They are decoupled from `Distributions.jl` so that downstream models do not require it as a dependency.
+Hidden semi-Markov models attach a sojourn-time (duration) distribution to each state. Sojourn times live on the strictly positive integers `{1, 2, 3, ...}`, since a state is always held for at least one timestep.
+
+HiddenMarkovModels.jl lets you bring any distribution with support on the non-negative integers `{0, 1, 2, ...}` that implements `Random.rand` and `DensityInterface.logdensityof`; including a plain `Distributions.Distribution`. The distribution you supply is interpreted as the law of `(sojourn time - 1)`, and the package applies the `+1` shift internally through the helpers below.
 
 ```@docs
-AbstractDurationDistribution
-GeometricDuration
-PoissonDuration
-NegBinomialDuration
+HiddenMarkovModels.duration_logdensityof
+HiddenMarkovModels.rand_duration
 ```
 
 ## Utils
