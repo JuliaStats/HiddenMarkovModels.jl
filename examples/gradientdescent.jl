@@ -53,7 +53,7 @@ Next, we provide the minimal interface expected by HiddenMarkovModels.jl:
 
 function DensityInterface.logdensityof(mod::NormalModel, obs::T) where {T<:Real}
     s = stddev(mod)
-    return - log(2π) / 2 - log(s) - ((obs - model_mean(mod)) / s)^2 / 2
+    return -log(2π) / 2 - log(s) - ((obs - model_mean(mod)) / s)^2 / 2
 end
 
 DensityInterface.DensityKind(::NormalModel) = DensityInterface.HasDensity()
@@ -120,8 +120,8 @@ Now that we have fully defined our observation model, we can create an HMM using
 
 init_dist = [0.2, 0.7, 0.1]
 init_trans = [
-    0.9 0.05 0.05;
-    0.075 0.9 0.025;
+    0.9 0.05 0.05
+    0.075 0.9 0.025
     0.1 0.1 0.8
 ]
 
@@ -146,8 +146,8 @@ gradient-based optimization (BFGS).
 
 init_dist_guess = fill(1.0 / 3, 3)
 init_trans_guess = [
-    0.98 0.01 0.01;
-    0.01 0.98 0.01;
+    0.98 0.01 0.01
+    0.01 0.98 0.01
     0.01 0.01 0.98
 ]
 

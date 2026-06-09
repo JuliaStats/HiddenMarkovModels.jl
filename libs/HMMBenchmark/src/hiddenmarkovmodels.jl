@@ -110,11 +110,11 @@ function build_benchmarkables(
                 ),
                 evals = 1,
                 setup = (
-                    hmm_guess=build_model($implem, $instance, $params);
-                    fb_storage=initialize_forward_backward(
+                    hmm_guess = build_model($implem, $instance, $params);
+                    fb_storage = initialize_forward_backward(
                         hmm_guess, $obs_seq, $control_seq; seq_ends=($seq_ends)
                     );
-                    logL_evolution=Float64[];
+                    logL_evolution = Float64[];
                     sizehint!(logL_evolution, $bw_iter)
                 )
             )

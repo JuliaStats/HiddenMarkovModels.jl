@@ -79,10 +79,10 @@ function HMMBenchmark.build_benchmarkables(
                 verbose=false,
             )
         end evals = 1 samples = 20 setup = (
-            tup=build_model($implem, $instance, $params);
-            hmm_guess=tup[1];
-            dyn_params_guess=tup[2];
-            dyn_props_guess=tup[3]
+            tup = build_model($implem, $instance, $params);
+            hmm_guess = tup[1];
+            dyn_params_guess = tup[2];
+            dyn_props_guess = tup[3]
         )
     end
 
