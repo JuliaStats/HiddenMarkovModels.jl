@@ -12,7 +12,7 @@ argument).
 
 See also [`rand_duration`](@ref).
 """
-duration_logdensityof(dist, k::Integer) = logdensityof(dist, k - 1)
+duration_logdensityof(dist, k::Integer) = logdensityof(dist, k - one(k))
 
 """
 $(SIGNATURES)
@@ -22,5 +22,9 @@ Sample a sojourn time on `{1, 2, 3, ...}` from the duration distribution `dist`.
 `dist` is interpreted as the law of `(sojourn time - 1)` (see [`duration_logdensityof`](@ref)),
 so this returns `rand(rng, dist) + 1`.
 """
-rand_duration(rng::AbstractRNG, dist) = rand(rng, dist) + 1
+function rand_duration(rng::AbstractRNG, dist)
+    t = rand(rng, dist)
+    return t + one(t)
+end
+
 rand_duration(dist) = rand_duration(default_rng(), dist)

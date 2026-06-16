@@ -9,10 +9,10 @@ using Test
 
 # A minimal user-defined duration distribution that only implements the required interface,
 # to confirm we never reach into `Distributions`-specific internals.
-struct ShiftedConst end  # deterministic: (sojourn - 1) == 0 always, i.e. sojourn == 1
-DensityInterface.DensityKind(::ShiftedConst) = HasDensity()
-DensityInterface.logdensityof(::ShiftedConst, x) = iszero(x) ? 0.0 : -Inf
-Base.rand(::AbstractRNG, ::ShiftedConst) = 0
+struct ConstDuration{T} end
+DensityInterface.DensityKind(::ConstDuration) = HasDensity()
+DensityInterface.logdensityof(::ConstDuration, x) = iszero(x) ? 0.0 : -Inf
+Base.rand(::AbstractRNG, ::ConstDuration{T}) where {T} = zero(T)
 
 @testset "Duration convention" begin
     @testset "Shift relationship" begin
@@ -49,8 +49,17 @@ Base.rand(::AbstractRNG, ::ShiftedConst) = 0
         end
     end
 
+    @testset "Sample type is preserved" begin
+        # The `+1` shift must keep the sampled type.
+        for T in (Int, Int32, Float32)
+            d = ConstDuration{T}()
+            @test rand_duration(StableRNG(1), d) === one(T)
+            @test rand_duration(d) === one(T)  # default rng overload
+        end
+    end
+
     @testset "Custom user distribution (interface only)" begin
-        d = ShiftedConst()
+        d = ConstDuration{Int}()
         @test duration_logdensityof(d, 1) == 0.0
         @test duration_logdensityof(d, 2) == -Inf
         @test duration_logdensityof(d, 0) == -Inf
