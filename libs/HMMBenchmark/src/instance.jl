@@ -9,12 +9,17 @@ Base.@kwdef struct Instance
 end
 
 function Base.string(c::Instance)
-    return reduce(*, "$n $(Int(getfield(c, n))) " for n in fieldnames(typeof(c)))[1:(end - 1)]
+    return join(("$n=$(getfield(c, n))" for n in fieldnames(typeof(c))), ";")
 end
 
-function Instance(s::String)
-    vals = parse.(Int, split(s, " ")[2:2:end])
-    return Instance(vals...)
+function Instance(s::AbstractString)
+    kwargs = Dict{Symbol,Any}()
+    for entry in split(s, ";")
+        k, v = split(entry, "="; limit=2)
+        sym = Symbol(k)
+        kwargs[sym] = parse(fieldtype(Instance, sym), v)
+    end
+    return Instance(; kwargs...)
 end
 
 function build_data(rng::AbstractRNG, instance::Instance)

@@ -22,13 +22,18 @@ function define_suite(
     return SUITE
 end
 
-quantile75(x) = quantile(x, 0.75)
-quantile25(x) = quantile(x, 0.25)
-
 function parse_results(
     results;
     path=nothing,
-    aggregators=[minimum, median, maximum, mean, std, quantile25, quantile75],
+    aggregators=[
+        :minimum => minimum,
+        :median => median,
+        :maximum => maximum,
+        :mean => mean,
+        :std => std,
+        :q25 => x -> quantile(x, 0.25),
+        :q75 => x -> quantile(x, 0.75),
+    ],
 )
     data = DataFrame()
     for implem_str in identity.(keys(results))
@@ -38,8 +43,8 @@ function parse_results(
                 perf = results[implem_str][instance_str][algo]
                 perf_dict = Dict{Symbol,Number}()
                 perf_dict[:samples] = length(perf.times)
-                for agg in aggregators
-                    perf_dict[Symbol("time_$agg")] = agg(perf.times)
+                for (name, agg) in aggregators
+                    perf_dict[Symbol("time_$name")] = agg(perf.times)
                 end
                 row = merge((; implem=implem_str, algo), to_namedtuple(instance))
                 row = merge(row, perf_dict)
@@ -49,9 +54,7 @@ function parse_results(
     end
 
     if !isnothing(path)
-        open(path, "w") do file
-            CSV.write(file, data)
-        end
+        CSV.write(path, data)
     end
     return data
 end
