@@ -38,7 +38,7 @@ end
 
 DensityInterface.DensityKind(::ControlBoundEmission) = HasDensity()
 function DensityInterface.logdensityof(ce::ControlBoundEmission, obs)
-    logdensityof(ce.dist, obs, ce.control)
+    return logdensityof(ce.dist, obs, ce.control)
 end
 Random.rand(rng::AbstractRNG, ce::ControlBoundEmission) = rand(rng, ce.dist, ce.control)
 
@@ -157,11 +157,11 @@ end
 # Returns a lazy ControlBoundEmissionVector:
 # each element is bound to `control` and responds to logdensityof(dist, obs) / rand(rng, dist)
 function obs_distributions(hmm::ControlledEmissionHMM, control)
-    ControlBoundEmissionVector(hmm.dists, control)
+    return ControlBoundEmissionVector(hmm.dists, control)
 end
 
 function obs_distributions(hmm::ControlledEmissionHMM, control::Nothing)
-    ControlBoundEmissionVector(hmm.dists, control)
+    return ControlBoundEmissionVector(hmm.dists, control)
 end
 Base.length(hmm::ControlledEmissionHMM) = length(hmm.dists)
 

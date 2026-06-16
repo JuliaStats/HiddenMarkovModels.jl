@@ -179,7 +179,7 @@ end
 function DensityInterface.logdensityof(d::LinearGaussian, obs::Real, control::Real)
     μ = d.β0 + d.β1 * control
     σ = exp(d.logσ)
-    return - log(2π) / 2 - d.logσ - ((obs - μ) / σ)^2 / 2
+    return -log(2π) / 2 - d.logσ - ((obs - μ) / σ)^2 / 2
 end
 
 function Random.rand(rng::AbstractRNG, d::LinearGaussian, control::Real)
