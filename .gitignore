@@ -6,6 +6,7 @@
 /docs/build/
 /docs/Manifest.toml
 /test/Manifest.toml
+/benchmark/Manifest.toml
 /libs/HMMBenchmark/Manifest.toml
 /libs/HMMTest/Manifest.toml
 /libs/HMMComparison/test/Manifest.toml
