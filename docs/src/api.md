@@ -112,6 +112,8 @@ HiddenMarkovModels.log_initialization
 HiddenMarkovModels.log_transition_matrix
 HiddenMarkovModels.mul_rows_cols!
 HiddenMarkovModels.argmaxplus_transmul!
+HiddenMarkovModels.duration_logdensityof
+HiddenMarkovModels.rand_duration
 ```
 
 ## Index

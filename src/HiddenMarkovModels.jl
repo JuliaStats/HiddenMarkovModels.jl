@@ -38,6 +38,7 @@ include("utils/fit.jl")
 include("utils/lightdiagnormal.jl")
 include("utils/lightcategorical.jl")
 include("utils/limits.jl")
+include("utils/duration.jl")
 
 include("inference/predict.jl")
 include("inference/forward.jl")
