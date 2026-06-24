@@ -1,11 +1,30 @@
 using HiddenMarkovModels
+import HiddenMarkovModels as HMMs
 using HiddenMarkovModels: rand_prob_vec, rand_trans_mat
+using DensityInterface
 using Distributions
 using Logging: with_logger
 using ProgressLogging: ProgressLevel
-using Random: Xoshiro
+using Random: Random, AbstractRNG, Xoshiro
 using Test
 using Test: TestLogger
+
+struct TestControlledEmissionDist <: ControlledEmission end
+
+# `DensityKind` is inherited from the `ControlledEmission` abstract supertype.
+function DensityInterface.logdensityof(::TestControlledEmissionDist, obs, control)
+    return -(obs - control)^2
+end
+Random.rand(::AbstractRNG, ::TestControlledEmissionDist, control) = control
+
+function thrown_error(f)
+    try
+        f()
+        return nothing
+    catch err
+        return err
+    end
+end
 
 @testset "Allow NaN density" begin
     init = rand_prob_vec(2)
@@ -14,6 +33,91 @@ using Test: TestLogger
     hmm = HMM(init, trans, dists)
     obs_seq = rand(5)
     @test isnan(logdensityof(hmm, obs_seq))
+end
+
+@testset "ControlledEmissionHMM accessors and control errors" begin
+    init = [0.4, 0.6]
+    trans = [0.7 0.3; 0.2 0.8]
+    dists = [TestControlledEmissionDist(), TestControlledEmissionDist()]
+    hmm = ControlledEmissionHMM(init, trans, dists)
+
+    @test initialization(hmm) === init
+    @test HMMs.log_initialization(hmm) === hmm.loginit
+    @test transition_matrix(hmm) === trans
+    @test HMMs.log_transition_matrix(hmm) === hmm.logtrans
+    @test transition_matrix(hmm, 1.0) === trans
+    @test transition_matrix(hmm, nothing) === trans
+    @test HMMs.log_transition_matrix(hmm, 1.0) === hmm.logtrans
+    @test HMMs.log_transition_matrix(hmm, nothing) === hmm.logtrans
+
+    controlled_dists = obs_distributions(hmm, 2.0)
+    @test controlled_dists isa ControlBoundEmissionVector
+    @test controlled_dists[1] isa ControlBoundEmission
+    @test logdensityof(controlled_dists[1], 3.0) == -1.0
+
+    nothing_dists = obs_distributions(hmm, nothing)
+    @test nothing_dists isa ControlBoundEmissionVector
+    @test nothing_dists[1] isa ControlBoundEmission
+
+    err = thrown_error() do
+        rand(hmm, 3)
+    end
+    @test err isa MethodError
+    @test occursin("requires a control sequence", sprint(showerror, err))
+    @test occursin("rand(hmm, control_seq)", sprint(showerror, err))
+
+    err = thrown_error() do
+        rand(Random.default_rng(), hmm, 3)
+    end
+    @test err isa MethodError
+    @test occursin("requires a control sequence", sprint(showerror, err))
+    @test occursin("rand(hmm, control_seq)", sprint(showerror, err))
+
+    obs_seq = [1.0, 2.0, 3.0]
+    control_seq = [1.0, 1.5, 2.0]
+    seq_ends = (3,)
+    fb_storage = HMMs.initialize_forward_backward(hmm, obs_seq, control_seq; seq_ends)
+    err = thrown_error() do
+        fit!(hmm, fb_storage, obs_seq; seq_ends)
+    end
+    @test err isa MethodError
+    @test occursin("requires `control_seq`", sprint(showerror, err))
+    @test occursin("fit!(hmm, fb_storage, obs_seq, control_seq", sprint(showerror, err))
+end
+
+@testset "ControlBoundEmission DensityKind and ControlBoundEmissionVector eltype" begin
+    dist = TestControlledEmissionDist()
+    # `DensityKind` is provided by the `ControlledEmission` abstract supertype.
+    @test DensityInterface.DensityKind(dist) === DensityInterface.HasDensity()
+
+    ce = ControlBoundEmission(dist, 1.5)
+    @test DensityInterface.DensityKind(ce) === DensityInterface.HasDensity()
+
+    dists = [TestControlledEmissionDist(), TestControlledEmissionDist()]
+    ces = ControlBoundEmissionVector(dists, 2.5)
+    @test eltype(ces) === ControlBoundEmission{TestControlledEmissionDist,Float64}
+    @test eltype(typeof(ces)) === ControlBoundEmission{TestControlledEmissionDist,Float64}
+end
+
+@testset "ControlledEmissionHMM constructor rejects invalid inputs" begin
+    dists2 = [TestControlledEmissionDist(), TestControlledEmissionDist()]
+    dists3 = [
+        TestControlledEmissionDist(),
+        TestControlledEmissionDist(),
+        TestControlledEmissionDist(),
+    ]
+    valid_init = [0.4, 0.6]
+    valid_trans = [0.7 0.3; 0.2 0.8]
+
+    # length mismatch between dists and init/trans dimensions
+    @test_throws ArgumentError ControlledEmissionHMM(valid_init, valid_trans, dists3)
+
+    # invalid initial probability vector (does not sum to 1)
+    @test_throws ArgumentError ControlledEmissionHMM([0.3, 0.6], valid_trans, dists2)
+
+    # invalid transition matrix (rows do not sum to 1)
+    bad_trans = [0.5 0.3; 0.2 0.8]
+    @test_throws ArgumentError ControlledEmissionHMM(valid_init, bad_trans, dists2)
 end
 
 @testset "Baum-Welch progress kwarg" begin

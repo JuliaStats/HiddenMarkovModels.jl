@@ -15,3 +15,13 @@ function fit_in_sequence!(dists::AbstractVector, i::Integer, x, w)
     fit!(dists[i], x, w)
     return nothing
 end
+
+#=
+ For ControlledHMM, we need to pass control_seq to fit!
+=#
+function HiddenMarkovModels.fit_in_sequence!(
+    dists::AbstractVector, i::Integer, x, control_seq, w
+)
+    StatsAPI.fit!(dists[i], x, control_seq, w)
+    return nothing
+end
