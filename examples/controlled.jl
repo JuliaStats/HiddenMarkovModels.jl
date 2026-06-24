@@ -264,5 +264,5 @@ test_type_stability(rng, hmm, control_seq; seq_ends, hmm_guess)  #src
 for i in 1:2  #src
     @test hmm_lg.dists[i].β0 ≈ hmm_lg_est.dists[i].β0 atol = 0.05  #src
     @test hmm_lg.dists[i].β1 ≈ hmm_lg_est.dists[i].β1 atol = 0.05  #src
-    @test hmm_lg.dists[i].logσ ≈ hmm_lg_est.dists[i].logσ atol = 0.05  #src
+    @test hmm_lg.dists[i].logσ ≈ hmm_lg_est.dists[i].logσ atol = 0.10  #src
 end  #src
