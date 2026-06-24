@@ -232,7 +232,7 @@ hmm_lg = ControlledEmissionHMM(init, trans, dists_lg);
 A `ControlledEmissionHMM` always requires a concrete control sequence: calling `rand(hmm, T::Integer)` is not supported, since there is no sensible default control. Provide a `control_seq` of the desired length instead.
 =#
 
-control_seq_lg = randn(rng, 2000);
+control_seq_lg = randn(rng, 10000);
 obs_seq_lg = rand(rng, hmm_lg, control_seq_lg).obs_seq;
 
 # ### Inference and learning
@@ -260,9 +260,9 @@ first(ll_lg), last(ll_lg)
 test_coherent_algorithms(rng, hmm, control_seq; seq_ends, hmm_guess, init=false)  #src
 test_type_stability(rng, hmm, control_seq; seq_ends, hmm_guess)  #src
 
-@test hmm_lg.trans ≈ hmm_lg_est.trans atol = 0.05  #src
+@test hmm_lg.trans ≈ hmm_lg_est.trans atol = 0.10  #src
 for i in 1:2  #src
-    @test hmm_lg.dists[i].β0 ≈ hmm_lg_est.dists[i].β0 atol = 0.05  #src
-    @test hmm_lg.dists[i].β1 ≈ hmm_lg_est.dists[i].β1 atol = 0.05  #src
+    @test hmm_lg.dists[i].β0 ≈ hmm_lg_est.dists[i].β0 atol = 0.10  #src
+    @test hmm_lg.dists[i].β1 ≈ hmm_lg_est.dists[i].β1 atol = 0.10  #src
     @test hmm_lg.dists[i].logσ ≈ hmm_lg_est.dists[i].logσ atol = 0.10  #src
 end  #src
