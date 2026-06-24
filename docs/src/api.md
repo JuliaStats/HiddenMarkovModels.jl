@@ -113,9 +113,11 @@ HiddenMarkovModels.log_initialization
 HiddenMarkovModels.log_transition_matrix
 HiddenMarkovModels.mul_rows_cols!
 HiddenMarkovModels.argmaxplus_transmul!
-ControlledEmission
-ControlBoundEmission
-ControlBoundEmissionVector
+HiddenMarkovModels.ControlledEmission
+HiddenMarkovModels.ControlBoundEmission
+HiddenMarkovModels.ControlBoundEmissionVector
+HiddenMarkovModels.duration_logdensityof
+HiddenMarkovModels.rand_duration
 ```
 
 ## Index
