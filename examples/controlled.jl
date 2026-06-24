@@ -259,3 +259,10 @@ first(ll_lg), last(ll_lg)
 @test hmm_est.dist_coeffs[2] ≈ hmm.dist_coeffs[2] atol = 0.05  #src
 test_coherent_algorithms(rng, hmm, control_seq; seq_ends, hmm_guess, init=false)  #src
 test_type_stability(rng, hmm, control_seq; seq_ends, hmm_guess)  #src
+
+@test hmm_lg.trans ≈ hmm_lg_est.trans atol = 0.05  #src
+for i in 1:2  #src
+    @test hmm_lg.dists[i].β0 ≈ hmm_lg_est.dists[i].β0 atol = 0.05  #src
+    @test hmm_lg.dists[i].β1 ≈ hmm_lg_est.dists[i].β1 atol = 0.05  #src
+    @test hmm_lg.dists[i].logσ ≈ hmm_lg_est.dists[i].logσ atol = 0.05  #src
+end  #src
