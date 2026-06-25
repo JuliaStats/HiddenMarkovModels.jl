@@ -93,7 +93,7 @@ If this package is useful to your research, please cite the [JOSS paper](https:/
 
 If you spot a bug or want to ask about a new feature, please [open an issue](https://github.com/JuliaStats/HiddenMarkovModels.jl/issues) on the GitHub repository.
 Once the issue receives positive feedback, feel free to try and fix it with a pull request that follows the [BlueStyle](https://github.com/invenia/BlueStyle) guidelines.
-Don't forget to add yourself to the contributors using [AllContributors](https://allcontributors.org/en/)!
+Don't forget to add yourself to the contributors using the [All Contributors bot](https://allcontributors.org/en/bot/usage/)!
 
 ## Acknowledgements
 
