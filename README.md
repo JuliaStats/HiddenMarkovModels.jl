@@ -11,6 +11,7 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.8128331.svg)](https://doi.org/10.5281/zenodo.8128331)
 [![DOI](https://joss.theoj.org/papers/10.21105/joss.06436/status.svg)](https://doi.org/10.21105/joss.06436)
+[![All Contributors](https://img.shields.io/github/all-contributors/JuliaStats/HiddenMarkovModels.jl?color=ee8449&style=flat-square)](#contributors)
 
 A Julia package for simulation, inference and learning of Hidden Markov Models with discrete states and discrete time.
 
@@ -92,8 +93,20 @@ If this package is useful to your research, please cite the [JOSS paper](https:/
 
 If you spot a bug or want to ask about a new feature, please [open an issue](https://github.com/JuliaStats/HiddenMarkovModels.jl/issues) on the GitHub repository.
 Once the issue receives positive feedback, feel free to try and fix it with a pull request that follows the [BlueStyle](https://github.com/invenia/BlueStyle) guidelines.
+Don't forget to add yourself to the contributors using the [All Contributors bot](https://allcontributors.org/en/bot/usage/)!
 
 ## Acknowledgements
 
 A big thank you to [Maxime Mouchet](https://www.maxmouchet.com/) and [Jacob Schreiber](https://jmschrei.github.io/), the respective lead devs of alternative packages [HMMBase.jl](https://github.com/maxmouchet/HMMBase.jl) and [pomegranate](https://github.com/jmschrei/pomegranate), for their help and advice.
 Logo by [Clément Mantoux](https://cmantoux.github.io/) based on a portrait of [Andrey Markov](https://en.wikipedia.org/wiki/Andrey_Markov).
+
+## Contributors
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
