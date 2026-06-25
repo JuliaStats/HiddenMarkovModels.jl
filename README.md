@@ -105,6 +105,13 @@ Logo by [Clément Mantoux](https://cmantoux.github.io/) based on a portrait of [
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
 <!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://gdalle.github.io/"><img src="https://avatars.githubusercontent.com/u/22795598?v=4?s=100" width="100px;" alt="Guillaume Dalle"/><br /><sub><b>Guillaume Dalle</b></sub></a><br /><a href="#ideas-gdalle" title="Ideas, Planning, & Feedback">🤔</a> <a href="#code-gdalle" title="Code">💻</a> <a href="#doc-gdalle" title="Documentation">📖</a> <a href="#maintenance-gdalle" title="Maintenance">🚧</a> <a href="#review-gdalle" title="Reviewed Pull Requests">👀</a></td>
+    </tr>
+  </tbody>
+</table>
 
 <!-- markdownlint-restore -->
 <!-- prettier-ignore-end -->
