@@ -38,6 +38,17 @@
       "contributions": [
         "ideas"
       ]
+    },
+    {
+      "login": "rsenne",
+      "name": "Ryan Senne",
+      "avatar_url": "https://avatars.githubusercontent.com/u/50930199?v=4",
+      "profile": "https://github.com/rsenne",
+      "contributions": [
+        "ideas",
+        "code",
+        "doc"
+      ]
     }
   ]
 }
