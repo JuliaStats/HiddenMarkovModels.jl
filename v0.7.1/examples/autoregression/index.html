@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Autoregression · HiddenMarkovModels.jl</title><meta name="title" content="Autoregression · HiddenMarkovModels.jl"/><meta property="og:title" content="Autoregression · HiddenMarkovModels.jl"/><meta property="twitter:title" content="Autoregression · HiddenMarkovModels.jl"/><meta name="description" content="Documentation for HiddenMarkovModels.jl."/><meta property="og:description" content="Documentation for HiddenMarkovModels.jl."/><meta property="twitter:description" content="Documentation for HiddenMarkovModels.jl."/><meta property="og:url" content="https://JuliaStats.github.io/HiddenMarkovModels.jl/examples/autoregression/"/><meta property="twitter:url" content="https://JuliaStats.github.io/HiddenMarkovModels.jl/examples/autoregression/"/><link rel="canonical" href="https://JuliaStats.github.io/HiddenMarkovModels.jl/examples/autoregression/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../../"><img src="../../assets/logo.png" alt="HiddenMarkovModels.jl logo"/></a><div class="docs-package-name"><span class="docs-autofit"><a href="../../">HiddenMarkovModels.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><span class="tocitem">Tutorials</span><ul><li><a class="tocitem" href="../basics/">Basics</a></li><li><a class="tocitem" href="../types/">Types</a></li><li><a class="tocitem" href="../interfaces/">Interfaces</a></li><li><a class="tocitem" href="../temporal/">Time dependency</a></li><li><a class="tocitem" href="../controlled/">Control dependency</a></li><li class="is-active"><a class="tocitem" href>Autoregression</a><ul class="internal"><li><a class="tocitem" href="#Model"><span>Model</span></a></li><li><a class="tocitem" href="#Simulation"><span>Simulation</span></a></li><li><a class="tocitem" href="#Inference"><span>Inference</span></a></li></ul></li><li><a class="tocitem" href="../autodiff/">Differentiation</a></li><li><a class="tocitem" href="../gradientdescent/">Gradient Descent in HMMs</a></li></ul></li><li><a class="tocitem" href="../../api/">API reference</a></li><li><span class="tocitem">Advanced</span><ul><li><a class="tocitem" href="../../alternatives/">Competitors</a></li><li><a class="tocitem" href="../../debugging/">Debugging</a></li><li><a class="tocitem" href="../../formulas/">Formulas</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Tutorials</a></li><li class="is-active"><a href>Autoregression</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Autoregression</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/JuliaStats/HiddenMarkovModels.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/JuliaStats/HiddenMarkovModels.jl/blob/main/examples/autoregression.jl" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Autoregression"><a class="docs-heading-anchor" href="#Autoregression">Autoregression</a><a id="Autoregression-1"></a><a class="docs-heading-anchor-permalink" href="#Autoregression" title="Permalink"></a></h1><p>Here, we give a example of autoregressive HMM, where the observation can depend on the previous observation. We achieve this by abusing the control mechanism, and slightly tweaking the simulation procedure.</p><pre><code class="language-julia hljs">using Distributions
+using HiddenMarkovModels
+import HiddenMarkovModels as HMMs
+using LinearAlgebra
+using CairoMakie
+using Random
+using StableRNGs
+using StatsAPI</code></pre><pre><code class="language-julia hljs">rng = StableRNG(63);</code></pre><h2 id="Model"><a class="docs-heading-anchor" href="#Model">Model</a><a id="Model-1"></a><a class="docs-heading-anchor-permalink" href="#Model" title="Permalink"></a></h2><p>We define a new subtype of <code>AbstractHMM</code> (see <a href="../interfaces/#Custom-HMM-structures">Custom HMM structures</a>), which has state-dependent coefficients linking the previous observation to the next observation.</p><pre><code class="language-julia hljs">struct ARGaussianHMM{T} &lt;: AbstractHMM
+    init::Vector{T}
+    trans::Matrix{T}
+    a::Vector{T}
+    b::Vector{T}
+end</code></pre><p>In state <span>$i$</span>, the observation is given by the linear model <span>$y_t \sim \mathcal{N}(a_i y_{t-1} + b_i, 1)$</span>. At the first time step, there will be no previous observation <span>$y_{t-1}$</span>, so we also allow the value <code>missing</code>.</p><pre><code class="language-julia hljs">function HMMs.initialization(hmm::ARGaussianHMM)
+    return hmm.init
+end
+
+function HMMs.transition_matrix(hmm::ARGaussianHMM, _prev_obs::Union{Real,Missing})
+    return hmm.trans
+end
+
+function HMMs.obs_distributions(hmm::ARGaussianHMM, prev_obs::Union{Real,Missing})
+    means_by_state = [hmm.a[i] * coalesce(prev_obs, 0.0) + hmm.b[i] for i in 1:length(hmm)]
+    return Normal.(means_by_state, 0.2)
+end</code></pre><p>In this case, the transition matrix does not depend on the previous observation.</p><h2 id="Simulation"><a class="docs-heading-anchor" href="#Simulation">Simulation</a><a id="Simulation-1"></a><a class="docs-heading-anchor-permalink" href="#Simulation" title="Permalink"></a></h2><pre><code class="language-julia hljs">init = [0.6, 0.4]
+trans = [0.95 0.05; 0.05 0.95]
+a = [0.7, 0.8]
+b = [+1.0, -1.0]
+hmm = ARGaussianHMM(init, trans, a, b);</code></pre><p>Simulation requires a manual procedure which reinjects the last observation as a control variable.</p><pre><code class="language-julia hljs">function simulate_autoregressive(rng::AbstractRNG, hmm::AbstractHMM, T::Integer)
+    init = initialization(hmm)
+    first_dists = obs_distributions(hmm, missing)
+    first_state = rand(rng, Distributions.Categorical(init))
+    first_obs = rand(rng, first_dists[first_state])
+    state_seq = [first_state]
+    obs_seq = [first_obs]
+
+    for t in 2:T
+        prev_state = state_seq[t - 1]
+        prev_obs = obs_seq[t - 1]
+        trans = transition_matrix(hmm, prev_obs)
+        dists = obs_distributions(hmm, prev_obs)
+        new_state = rand(rng, Distributions.Categorical(trans[prev_state, :]))
+        new_obs = rand(rng, dists[new_state])
+        push!(state_seq, new_state)
+        push!(obs_seq, new_obs)
+    end
+
+    return (; state_seq=state_seq, obs_seq=obs_seq)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">simulate_autoregressive (generic function with 1 method)</code></pre><pre><code class="language-julia hljs">T = 300
+times = 1:T
+state_seq, obs_seq = simulate_autoregressive(rng, hmm, T)
+
+let
+    fig = Figure()
+    ax = Axis(fig[1, 1]; xlabel=&quot;time&quot;, ylabel=&quot;observation&quot;)
+    scatter!(ax, times[state_seq .== 1], obs_seq[state_seq .== 1]; label=&quot;state 1&quot;)
+    scatter!(ax, times[state_seq .== 2], obs_seq[state_seq .== 2]; label=&quot;state 2&quot;)
+    axislegend(ax)
+    fig
+end</code></pre><img src="76e4fc5e.png" alt="Example block output"/><h2 id="Inference"><a class="docs-heading-anchor" href="#Inference">Inference</a><a id="Inference-1"></a><a class="docs-heading-anchor-permalink" href="#Inference" title="Permalink"></a></h2><p>At inference time, the observations are considered fixed. Therefore, we are allowed to use them as controls.</p><pre><code class="language-julia hljs">control_seq = vcat(missing, obs_seq[1:(end - 1)])</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">300-element Vector{Union{Missing, Float64}}:
+   missing
+ -1.1085018417948282
+  0.3038479809487052
+  1.2104011700181205
+  2.0525040392602403
+  2.426705885211878
+  1.2613729375668172
+  0.024623936852238754
+ -1.0785829196278915
+ -1.9608500808520999
+  ⋮
+ -4.143832230689745
+ -4.338804677474819
+ -4.499707383307353
+ -4.634376395512743
+ -4.638207921124244
+ -4.72602275967213
+ -4.685139429089525
+ -4.585752306183309
+ -4.6314175219869815</code></pre><p>We show an example with Viterbi&#39;s algorithm.</p><pre><code class="language-julia hljs">best_state_seq, _ = viterbi(hmm, obs_seq, control_seq)
+
+let
+    fig = Figure()
+    ax0 = Axis(fig[0, 1]; ylabel=&quot;observations&quot;)
+    ax1 = Axis(fig[1, 1]; limits=(nothing, (0.5, 2.5)), yticks=1:2, ylabel=&quot;true state&quot;)
+    ax2 = Axis(
+        fig[2, 1];
+        limits=(nothing, (0.5, 2.5)),
+        yticks=1:2,
+        ylabel=&quot;inferred state&quot;,
+        xlabel=&quot;time&quot;,
+    )
+    scatter!(ax0, times, obs_seq)
+    lines!(ax1, times, state_seq)
+    lines!(ax2, times, best_state_seq)
+    fig
+end</code></pre><img src="e7f3a8ee.png" alt="Example block output"/><hr/><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl">Literate.jl</a>.</em></p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../controlled/">« Control dependency</a><a class="docs-footer-nextpage" href="../autodiff/">Differentiation »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Thursday 25 June 2026 08:17">Thursday 25 June 2026</span>. Using Julia version 1.11.9.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

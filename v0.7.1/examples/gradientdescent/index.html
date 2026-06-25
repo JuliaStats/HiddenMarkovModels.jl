@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Gradient Descent in HMMs · HiddenMarkovModels.jl</title><meta name="title" content="Gradient Descent in HMMs · HiddenMarkovModels.jl"/><meta property="og:title" content="Gradient Descent in HMMs · HiddenMarkovModels.jl"/><meta property="twitter:title" content="Gradient Descent in HMMs · HiddenMarkovModels.jl"/><meta name="description" content="Documentation for HiddenMarkovModels.jl."/><meta property="og:description" content="Documentation for HiddenMarkovModels.jl."/><meta property="twitter:description" content="Documentation for HiddenMarkovModels.jl."/><meta property="og:url" content="https://JuliaStats.github.io/HiddenMarkovModels.jl/examples/gradientdescent/"/><meta property="twitter:url" content="https://JuliaStats.github.io/HiddenMarkovModels.jl/examples/gradientdescent/"/><link rel="canonical" href="https://JuliaStats.github.io/HiddenMarkovModels.jl/examples/gradientdescent/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../../"><img src="../../assets/logo.png" alt="HiddenMarkovModels.jl logo"/></a><div class="docs-package-name"><span class="docs-autofit"><a href="../../">HiddenMarkovModels.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><span class="tocitem">Tutorials</span><ul><li><a class="tocitem" href="../basics/">Basics</a></li><li><a class="tocitem" href="../types/">Types</a></li><li><a class="tocitem" href="../interfaces/">Interfaces</a></li><li><a class="tocitem" href="../temporal/">Time dependency</a></li><li><a class="tocitem" href="../controlled/">Control dependency</a></li><li><a class="tocitem" href="../autoregression/">Autoregression</a></li><li><a class="tocitem" href="../autodiff/">Differentiation</a></li><li class="is-active"><a class="tocitem" href>Gradient Descent in HMMs</a></li></ul></li><li><a class="tocitem" href="../../api/">API reference</a></li><li><span class="tocitem">Advanced</span><ul><li><a class="tocitem" href="../../alternatives/">Competitors</a></li><li><a class="tocitem" href="../../debugging/">Debugging</a></li><li><a class="tocitem" href="../../formulas/">Formulas</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Tutorials</a></li><li class="is-active"><a href>Gradient Descent in HMMs</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Gradient Descent in HMMs</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/JuliaStats/HiddenMarkovModels.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/JuliaStats/HiddenMarkovModels.jl/blob/main/examples/gradientdescent.jl" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Gradient-Descent-in-HMMs"><a class="docs-heading-anchor" href="#Gradient-Descent-in-HMMs">Gradient Descent in HMMs</a><a id="Gradient-Descent-in-HMMs-1"></a><a class="docs-heading-anchor-permalink" href="#Gradient-Descent-in-HMMs" title="Permalink"></a></h1><p>In this tutorial we explore two ways to use gradient descent when fitting HMMs:</p><ol><li>Fitting parameters of an observation model that do not have closed-form updates (e.g., GLMs, neural networks, etc.), inside the EM algorithm.</li><li>Fitting the entire HMM with gradient-based optimization by leveraging automatic differentiation.</li></ol><p>We will explore both approaches below.</p><pre><code class="language-julia hljs">using ADTypes
+using ComponentArrays
+using DensityInterface
+using ForwardDiff
+using HiddenMarkovModels
+using LinearAlgebra
+using Optim
+using Random
+using StableRNGs
+using StatsAPI
+
+rng = StableRNG(42)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">StableRNGs.LehmerRNG(state=0x00000000000000000000000000000055)</code></pre><p>For both parts of this tutorial we use a simple HMM with Gaussian observations. Using gradient-based optimization here is overkill, but it keeps the tutorial simple while illustrating the relevant methods.</p><p>We begin by defining a Normal observation model.</p><pre><code class="language-julia hljs">mutable struct NormalModel{T}
+    μ::T
+    logσ::T  # unconstrained parameterization; σ = exp(logσ)
+end
+
+model_mean(mod::NormalModel) = mod.μ
+stddev(mod::NormalModel) = exp(mod.logσ)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">stddev (generic function with 1 method)</code></pre><p>We have defined a simple probability model with two parameters: the mean and the log of the standard deviation. Using <code>logσ</code> is intentional so we can optimize over all real numbers without worrying about the positivity constraint on <code>σ</code>.</p><p>Next, we provide the minimal interface expected by HiddenMarkovModels.jl: <code>(logdensityof, rand, fit!)</code>.</p><pre><code class="language-julia hljs">function DensityInterface.logdensityof(mod::NormalModel, obs::T) where {T&lt;:Real}
+    s = stddev(mod)
+    return -log(2π) / 2 - log(s) - ((obs - model_mean(mod)) / s)^2 / 2
+end
+
+DensityInterface.DensityKind(::NormalModel) = DensityInterface.HasDensity()
+
+function Random.rand(rng::AbstractRNG, mod::NormalModel{T}) where {T}
+    return stddev(mod) * randn(rng, T) + model_mean(mod)
+end</code></pre><p>Because we are fitting a Gaussian (and the variance can collapse to ~0), we add weak priors to regularize the parameters. We use:</p><ul><li>A weak Normal prior on <code>μ</code></li><li>A moderate-strength Normal prior on <code>logσ</code> that pulls <code>σ</code> toward ~1</li></ul><pre><code class="language-julia hljs">const μ_prior = NormalModel(0.0, log(10.0))
+const logσ_prior = NormalModel(log(1.0), log(0.5))
+
+function neglogpost(
+    μ::T,
+    logσ::T,
+    data::AbstractVector{&lt;:Real},
+    weights::AbstractVector{&lt;:Real},
+    μ_prior::NormalModel,
+    logσ_prior::NormalModel,
+) where {T&lt;:Real}
+    tmp = NormalModel(μ, logσ)
+
+    nll = mapreduce(
+        i -&gt; -weights[i] * logdensityof(tmp, data[i]), +, eachindex(data, weights)
+    )
+
+    nll += -logdensityof(μ_prior, μ)
+    nll += -logdensityof(logσ_prior, logσ)
+
+    return nll
+end
+
+function neglogpost(
+    θ::AbstractVector{T},
+    data::AbstractVector{&lt;:Real},
+    weights::AbstractVector{&lt;:Real},
+    μ_prior::NormalModel,
+    logσ_prior::NormalModel,
+) where {T&lt;:Real}
+    μ, logσ = θ
+    return neglogpost(μ, logσ, data, weights, μ_prior, logσ_prior)
+end
+
+function StatsAPI.fit!(
+    mod::NormalModel, data::AbstractVector{&lt;:Real}, weights::AbstractVector{&lt;:Real}
+)
+    T = promote_type(typeof(mod.μ), typeof(mod.logσ))
+    θ0 = T[T(mod.μ), T(mod.logσ)]
+    obj = θ -&gt; neglogpost(θ, data, weights, μ_prior, logσ_prior)
+    result = Optim.optimize(obj, θ0, BFGS(); autodiff=AutoForwardDiff())
+    mod.μ, mod.logσ = Optim.minimizer(result)
+    return mod
+end</code></pre><p>Now that we have fully defined our observation model, we can create an HMM using it.</p><pre><code class="language-julia hljs">init_dist = [0.2, 0.7, 0.1]
+init_trans = [
+    0.9 0.05 0.05
+    0.075 0.9 0.025
+    0.1 0.1 0.8
+]
+
+obs_dists = [
+    NormalModel(-3.0, log(0.25)), NormalModel(0.0, log(0.5)), NormalModel(3.0, log(0.75))
+]
+
+hmm_true = HMM(init_dist, init_trans, obs_dists)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Hidden Markov Model with:
+ - initialization: [0.2, 0.7, 0.1]
+ - transition matrix: [0.9 0.05 0.05; 0.075 0.9 0.025; 0.1 0.1 0.8]
+ - observation distributions: [Main.NormalModel{Float64}(-3.0, -1.3862943611198906), Main.NormalModel{Float64}(0.0, -0.6931471805599453), Main.NormalModel{Float64}(3.0, -0.2876820724517809)]</code></pre><p>We can now generate data from this HMM. Note: <code>rand(rng, hmm, T)</code> returns <code>(state_seq, obs_seq)</code>.</p><pre><code class="language-julia hljs">state_seq, obs_seq = rand(rng, hmm_true, 10_000)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(state_seq = [2, 2, 2, 2, 2, 2, 2, 2, 2, 2  …  2, 1, 1, 1, 1, 1, 1, 1, 3, 3], obs_seq = [0.18676222545978152, -0.010693241131214582, -0.2784822510041131, 0.08762810726537032, -1.0844753758113237, 0.16158875227330957, 0.23966610660195012, 0.3420226663030283, 0.5216136091863335, 0.36307062133252843  …  -0.5352268156888037, -3.4262027995877578, -2.715359345491884, -3.39569049903953, -2.9847698058919203, -2.6313341019638505, -2.6252349000380084, -2.8993960061998374, 2.814659049681727, 2.9787243151708425])</code></pre><p>Next we fit a new HMM to this data. Baum–Welch will perform EM updates for the HMM parameters; during the M-step, our observation model parameters are fit via gradient-based optimization (BFGS).</p><pre><code class="language-julia hljs">init_dist_guess = fill(1.0 / 3, 3)
+init_trans_guess = [
+    0.98 0.01 0.01
+    0.01 0.98 0.01
+    0.01 0.01 0.98
+]
+
+obs_dist_guess = [
+    NormalModel(-2.0, log(1.0)), NormalModel(2.0, log(1.0)), NormalModel(0.0, log(1.0))
+]
+
+hmm_guess = HMM(init_dist_guess, init_trans_guess, obs_dist_guess)
+
+hmm_est, lls = baum_welch(hmm_guess, obs_seq)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(Hidden Markov Model with:
+ - initialization: [9.488970316129715e-219, 2.084310358336173e-32, 1.0]
+ - transition matrix: [0.9009541783953148 0.0523454731235879 0.04670034848109712; 0.0922091349544837 0.8101900503265297 0.09760081471898664; 0.07177949170293166 0.022646527730598564 0.9055739805664698]
+ - observation distributions: [Main.NormalModel{Float64}(-2.998739990936056, -1.3730911369240926), Main.NormalModel{Float64}(3.031999162184866, -0.3158190178345715), Main.NormalModel{Float64}(0.0056615595968454386, -0.701341692965898)], [-17992.376536779982, -11827.462331361017, -9046.465817561802, -9029.354676316934, -9029.22729506789, -9029.224714316486, -9029.224605808902, -9029.224596144144])</code></pre><p>Great! We were able to fit the model using gradient descent inside EM.</p><p>Now we will fit the entire HMM using gradient-based optimization by leveraging automatic differentiation. The key idea is that the forward algorithm marginalizes out the latent states, providing the likelihood of the observations directly as a function of all model parameters.</p><p>We can therefore optimize the negative log-likelihood returned by <code>forward</code>. Each objective evaluation runs the forward algorithm, which can be expensive for large datasets, but this approach allows end-to-end gradient-based fitting for arbitrary parameterized HMMs.</p><p>To respect HMM constraints, we optimize unconstrained parameters and map them to valid probability distributions via softmax:</p><ul><li><code>π = softmax(ηπ)</code></li><li>each row of <code>A</code> = <code>softmax(row_logits)</code></li></ul><pre><code class="language-julia hljs">function softmax(v::AbstractVector)
+    m = maximum(v)
+    ex = exp.(v .- m)
+    return ex ./ sum(ex)
+end
+
+function rowsoftmax(M::AbstractMatrix)
+    A = similar(M)
+    for i in 1:size(M, 1)
+        A[i, :] .= softmax(view(M, i, :))
+    end
+    return A
+end
+
+function unpack_to_hmm(θ::ComponentVector)
+    K = length(θ.ηπ)
+
+    π = softmax(θ.ηπ)
+    A = rowsoftmax(θ.ηA)
+    dists = [NormalModel(θ.μ[k], θ.logσ[k]) for k in 1:K]
+
+    return HMM(π, A, dists)
+end
+
+function hmm_to_θ0(hmm::HMM)
+    K = length(hmm.init)
+
+    T = promote_type(
+        eltype(hmm.init),
+        eltype(hmm.trans),
+        eltype(hmm.dists[1].μ),
+        eltype(hmm.dists[1].logσ),
+    )
+
+    ηπ = log.(hmm.init .+ eps(T))
+    ηA = log.(hmm.trans .+ eps(T))
+
+    μ = [hmm.dists[k].μ for k in 1:K]
+    logσ = [hmm.dists[k].logσ for k in 1:K]
+
+    return ComponentVector(; ηπ=ηπ, ηA=ηA, μ=μ, logσ=logσ)
+end
+
+function negloglik_from_θ(θ::ComponentVector, obs_seq)
+    hmm = unpack_to_hmm(θ)
+    _, loglik = forward(hmm, obs_seq; error_if_not_finite=false)
+    return -loglik[1]
+end
+
+θ0 = hmm_to_θ0(hmm_guess)
+ax = getaxes(θ0)
+
+obj(x) = negloglik_from_θ(ComponentVector(x, ax), obs_seq)
+
+result = Optim.optimize(obj, Vector(θ0), BFGS(); autodiff=AutoForwardDiff())
+hmm_est2 = unpack_to_hmm(ComponentVector(result.minimizer, ax))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Hidden Markov Model with:
+ - initialization: [4.832572481121333e-18, 4.219535328535932e-18, 1.0]
+ - transition matrix: [0.900954177626253 0.052345216589079584 0.04670060578466745; 0.09220927064123588 0.8101851152959032 0.09760561406286092; 0.07177945535615372 0.022648712661270023 0.9055718319825763]
+ - observation distributions: [Main.NormalModel{Float64}(-2.998740427485512, -1.3737153743543045), Main.NormalModel{Float64}(3.0320182094334345, -0.31622032685126156), Main.NormalModel{Float64}(0.005660568991269338, -0.7017072704058933)]</code></pre><p>We have now trained an HMM using gradient-based optimization over <em>all</em> parameters!</p><hr/><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl">Literate.jl</a>.</em></p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../autodiff/">« Differentiation</a><a class="docs-footer-nextpage" href="../../api/">API reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Thursday 25 June 2026 08:17">Thursday 25 June 2026</span>. Using Julia version 1.11.9.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

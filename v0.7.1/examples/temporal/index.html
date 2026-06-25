@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Time dependency · HiddenMarkovModels.jl</title><meta name="title" content="Time dependency · HiddenMarkovModels.jl"/><meta property="og:title" content="Time dependency · HiddenMarkovModels.jl"/><meta property="twitter:title" content="Time dependency · HiddenMarkovModels.jl"/><meta name="description" content="Documentation for HiddenMarkovModels.jl."/><meta property="og:description" content="Documentation for HiddenMarkovModels.jl."/><meta property="twitter:description" content="Documentation for HiddenMarkovModels.jl."/><meta property="og:url" content="https://JuliaStats.github.io/HiddenMarkovModels.jl/examples/temporal/"/><meta property="twitter:url" content="https://JuliaStats.github.io/HiddenMarkovModels.jl/examples/temporal/"/><link rel="canonical" href="https://JuliaStats.github.io/HiddenMarkovModels.jl/examples/temporal/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../../"><img src="../../assets/logo.png" alt="HiddenMarkovModels.jl logo"/></a><div class="docs-package-name"><span class="docs-autofit"><a href="../../">HiddenMarkovModels.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><span class="tocitem">Tutorials</span><ul><li><a class="tocitem" href="../basics/">Basics</a></li><li><a class="tocitem" href="../types/">Types</a></li><li><a class="tocitem" href="../interfaces/">Interfaces</a></li><li class="is-active"><a class="tocitem" href>Time dependency</a><ul class="internal"><li><a class="tocitem" href="#Model"><span>Model</span></a></li><li><a class="tocitem" href="#Simulation"><span>Simulation</span></a></li><li><a class="tocitem" href="#Inference"><span>Inference</span></a></li><li><a class="tocitem" href="#Learning"><span>Learning</span></a></li></ul></li><li><a class="tocitem" href="../controlled/">Control dependency</a></li><li><a class="tocitem" href="../autoregression/">Autoregression</a></li><li><a class="tocitem" href="../autodiff/">Differentiation</a></li><li><a class="tocitem" href="../gradientdescent/">Gradient Descent in HMMs</a></li></ul></li><li><a class="tocitem" href="../../api/">API reference</a></li><li><span class="tocitem">Advanced</span><ul><li><a class="tocitem" href="../../alternatives/">Competitors</a></li><li><a class="tocitem" href="../../debugging/">Debugging</a></li><li><a class="tocitem" href="../../formulas/">Formulas</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Tutorials</a></li><li class="is-active"><a href>Time dependency</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Time dependency</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/JuliaStats/HiddenMarkovModels.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/JuliaStats/HiddenMarkovModels.jl/blob/main/examples/temporal.jl" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Time-dependency"><a class="docs-heading-anchor" href="#Time-dependency">Time dependency</a><a id="Time-dependency-1"></a><a class="docs-heading-anchor-permalink" href="#Time-dependency" title="Permalink"></a></h1><p>Here, we demonstrate what to do when transition and observation laws depend on the current time. This time-dependent HMM is implemented as a particular case of controlled HMM.</p><pre><code class="language-julia hljs">using Distributions
+using HiddenMarkovModels
+import HiddenMarkovModels as HMMs
+using Random
+using StableRNGs
+using StatsAPI</code></pre><pre><code class="language-julia hljs">rng = StableRNG(63);</code></pre><h2 id="Model"><a class="docs-heading-anchor" href="#Model">Model</a><a id="Model-1"></a><a class="docs-heading-anchor-permalink" href="#Model" title="Permalink"></a></h2><p>We focus on the particular case of a periodic HMM with period <code>L</code>. It has only one initialization vector, but <code>L</code> transition matrices and <code>L</code> vectors of observation distributions. As in <a href="../interfaces/#Custom-HMM-structures">Custom HMM structures</a>, we need to subtype <code>AbstractHMM</code>.</p><pre><code class="language-julia hljs">struct PeriodicHMM{T&lt;:Number,D,L} &lt;: AbstractHMM
+    init::Vector{T}
+    trans_per::NTuple{L,Matrix{T}}
+    dists_per::NTuple{L,Vector{D}}
+end</code></pre><p>The interface definition is almost the same as in the homogeneous case, but we give the control variable (here the time) as an additional argument to <code>transition_matrix</code> and <code>obs_distributions</code>.</p><pre><code class="language-julia hljs">period(::PeriodicHMM{T,D,L}) where {T,D,L} = L
+
+function HMMs.initialization(hmm::PeriodicHMM)
+    return hmm.init
+end
+
+function HMMs.transition_matrix(hmm::PeriodicHMM, t::Integer)
+    l = (t - 1) % period(hmm) + 1
+    return hmm.trans_per[l]
+end
+
+function HMMs.obs_distributions(hmm::PeriodicHMM, t::Integer)
+    l = (t - 1) % period(hmm) + 1
+    return hmm.dists_per[l]
+end</code></pre><h2 id="Simulation"><a class="docs-heading-anchor" href="#Simulation">Simulation</a><a id="Simulation-1"></a><a class="docs-heading-anchor-permalink" href="#Simulation" title="Permalink"></a></h2><pre><code class="language-julia hljs">init = [0.6, 0.3, 0.1]
+trans_per = (
+    [ # l = 1 -&gt; mostly switch to next state
+        0.2 0.8 0.0
+        0.0 0.2 0.8
+        0.8 0.0 0.2
+    ],
+    [ # l = 2 -&gt; mostly switch to previous state
+        0.2 0.0 0.8
+        0.8 0.2 0.0
+        0.0 0.8 0.2
+    ],
+    [ # l = 3 -&gt; mostly stay in current state
+        0.8 0.1 0.1
+        0.1 0.8 0.1
+        0.1 0.1 0.8
+    ],
+)
+dists_per = (
+    [Normal(1.0), Normal(2.0), Normal(3.0)],
+    [Normal(3.0), Normal(4.0), Normal(5.0)],
+    [Normal(5.0), Normal(6.0), Normal(7.0)],
+)
+hmm = PeriodicHMM(init, trans_per, dists_per);</code></pre><p>Since the behavior of the model depends on control variables, we need to pass these to the simulation routine (instead of just the number of time steps <code>T</code>).</p><pre><code class="language-julia hljs">control_seq = 1:10
+state_seq, obs_seq = rand(rng, hmm, control_seq);</code></pre><p>The observations mostly alternate between positive and negative values, which is coherent with negative observation means at odd times and positive observation means at even times.</p><pre><code class="language-julia hljs">obs_seq&#39;</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">1×10 adjoint(::Vector{Float64}) with eltype Float64:
+ 3.15929  4.60004  5.30241  2.07763  …  3.50298  2.51008  5.1677  0.348071</code></pre><p>We now generate several sequences of variable lengths, for inference and learning tasks.</p><pre><code class="language-julia hljs">control_seqs = [1:rand(rng, 100:200) for k in 1:1000]
+obs_seqs = [rand(rng, hmm, control_seqs[k]).obs_seq for k in eachindex(control_seqs)];
+
+obs_seq = reduce(vcat, obs_seqs)
+control_seq = reduce(vcat, control_seqs)
+seq_ends = cumsum(length.(obs_seqs));</code></pre><h2 id="Inference"><a class="docs-heading-anchor" href="#Inference">Inference</a><a id="Inference-1"></a><a class="docs-heading-anchor-permalink" href="#Inference" title="Permalink"></a></h2><p>All three inference algorithms work in the same way, except that we need to provide the control sequence as the last positional argument.</p><pre><code class="language-julia hljs">best_state_seq, _ = viterbi(hmm, obs_seq, control_seq; seq_ends)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">([1, 3, 3, 3, 2, 2, 3, 2, 2, 3  …  1, 1, 1, 3, 1, 2, 1, 1, 2, 1], [-338.1598788374384, -264.02201367838444, -363.3751457229987, -327.56205924276986, -241.77781132672078, -176.98431486613364, -307.55698780914526, -303.6807200516033, -215.49999838420771, -273.6631616955435  …  -289.02560368764665, -248.35790041883394, -180.25383246901902, -201.31569791813394, -280.4615462353202, -227.57888520433457, -247.0328516674336, -345.2831898774707, -196.76362253507708, -284.2881473064425])</code></pre><p>For Viterbi, unsurprisingly, the most likely state sequence aligns with the sign of the observations.</p><pre><code class="language-julia hljs">vcat(obs_seq&#39;, best_state_seq&#39;)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">2×149134 Matrix{Float64}:
+ 0.434712  4.89023  6.0682  4.09868  …  3.72124  3.20197  2.96069  3.03086
+ 1.0       3.0      3.0     3.0         1.0      1.0      2.0      1.0</code></pre><h2 id="Learning"><a class="docs-heading-anchor" href="#Learning">Learning</a><a id="Learning-1"></a><a class="docs-heading-anchor-permalink" href="#Learning" title="Permalink"></a></h2><p>When estimating parameters for a custom subtype of <code>AbstractHMM</code>, we have to override the fitting procedure after forward-backward, with an additional <code>control_seq</code> positional argument. The key is to split the observations according to which periodic parameter they belong to.</p><pre><code class="language-julia hljs">function StatsAPI.fit!(
+    hmm::PeriodicHMM{T},
+    fb_storage::HMMs.ForwardBackwardStorage,
+    obs_seq::AbstractVector,
+    control_seq::AbstractVector;
+    seq_ends,
+) where {T}
+    (; γ, ξ) = fb_storage
+    L, N = period(hmm), length(hmm)
+
+    hmm.init .= zero(T)
+    for l in 1:L
+        hmm.trans_per[l] .= zero(T)
+    end
+    for k in eachindex(seq_ends)
+        t1, t2 = HMMs.seq_limits(seq_ends, k)
+        hmm.init .+= γ[:, t1]
+        for l in 1:L
+            first_time_trans_l = if l &gt; 1
+                t1 + l - 2
+            else
+                t1 + l - 2 + L
+            end
+            hmm.trans_per[l] .+= sum(ξ[first_time_trans_l:L:t2])
+        end
+    end
+    hmm.init ./= sum(hmm.init)
+    for l in 1:L, row in eachrow(hmm.trans_per[l])
+        row ./= sum(row)
+    end
+
+    for l in 1:L
+        times_l = Int[]
+        for k in eachindex(seq_ends)
+            t1, t2 = HMMs.seq_limits(seq_ends, k)
+            append!(times_l, (t1 + l - 1):L:t2)
+        end
+        for i in 1:N
+            HMMs.fit_in_sequence!(hmm.dists_per[l], i, obs_seq[times_l], γ[i, times_l])
+        end
+    end
+
+    for l in 1:L
+        @assert HMMs.valid_hmm(hmm, l)
+    end
+    return nothing
+end</code></pre><p>Now let&#39;s test our procedure with a reasonable guess.</p><pre><code class="language-julia hljs">init_guess = [0.4, 0.2, 0.3]
+trans_per_guess = ntuple(_ -&gt; [
+    0.4 0.3 0.3
+    0.3 0.4 0.3
+    0.3 0.3 0.4
+], Val(3))
+dists_per_guess = (
+    [Normal(1.5), Normal(2.2), Normal(2.5)],
+    [Normal(3.5), Normal(4.2), Normal(4.5)],
+    [Normal(5.5), Normal(6.2), Normal(6.5)],
+)
+hmm_guess = PeriodicHMM(init_guess, trans_per_guess, dists_per_guess);</code></pre><p>Naturally, Baum-Welch also requires knowing <code>control_seq</code>.</p><pre><code class="language-julia hljs">hmm_est, loglikelihood_evolution = baum_welch(hmm_guess, obs_seq, control_seq; seq_ends);
+first(loglikelihood_evolution), last(loglikelihood_evolution)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">(-255695.48690011754, -243058.7258113099)</code></pre><p>Did we do well?</p><pre><code class="language-julia hljs">cat(transition_matrix(hmm_est, 1), transition_matrix(hmm, 1); dims=3)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">3×3×2 Array{Float64, 3}:
+[:, :, 1] =
+ 0.186413   0.773622   0.0399647
+ 0.0299322  0.146951   0.823117
+ 0.796874   0.0112494  0.191877
+
+[:, :, 2] =
+ 0.2  0.8  0.0
+ 0.0  0.2  0.8
+ 0.8  0.0  0.2</code></pre><pre><code class="language-julia hljs">cat(transition_matrix(hmm_est, 2), transition_matrix(hmm, 2); dims=3)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">3×3×2 Array{Float64, 3}:
+[:, :, 1] =
+ 0.177002   0.0286042  0.794393
+ 0.860977   0.121398   0.0176248
+ 0.0344084  0.789656   0.175936
+
+[:, :, 2] =
+ 0.2  0.0  0.8
+ 0.8  0.2  0.0
+ 0.0  0.8  0.2</code></pre><pre><code class="language-julia hljs">cat(transition_matrix(hmm_est, 3), transition_matrix(hmm, 3); dims=3)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">3×3×2 Array{Float64, 3}:
+[:, :, 1] =
+ 0.792613   0.109302   0.0980847
+ 0.0997413  0.799007   0.101252
+ 0.114763   0.0867425  0.798494
+
+[:, :, 2] =
+ 0.8  0.1  0.1
+ 0.1  0.8  0.1
+ 0.1  0.1  0.8</code></pre><pre><code class="language-julia hljs">map(mean, hcat(obs_distributions(hmm_est, 1), obs_distributions(hmm, 1)))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">3×2 Matrix{Float64}:
+ 1.01396  1.0
+ 1.94455  2.0
+ 3.0178   3.0</code></pre><pre><code class="language-julia hljs">map(mean, hcat(obs_distributions(hmm_est, 2), obs_distributions(hmm, 2)))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">3×2 Matrix{Float64}:
+ 2.99407  3.0
+ 4.01272  4.0
+ 4.98621  5.0</code></pre><pre><code class="language-julia hljs">map(mean, hcat(obs_distributions(hmm_est, 3), obs_distributions(hmm, 3)))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">3×2 Matrix{Float64}:
+ 4.97559  5.0
+ 6.0085   6.0
+ 7.02123  7.0</code></pre><hr/><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl">Literate.jl</a>.</em></p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../interfaces/">« Interfaces</a><a class="docs-footer-nextpage" href="../controlled/">Control dependency »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Thursday 25 June 2026 08:17">Thursday 25 June 2026</span>. Using Julia version 1.11.9.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
