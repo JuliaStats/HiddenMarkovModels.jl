@@ -109,6 +109,7 @@ Logo by [Clément Mantoux](https://cmantoux.github.io/) based on a portrait of [
   <tbody>
     <tr>
       <td align="center" valign="top" width="14.28%"><a href="https://gdalle.github.io/"><img src="https://avatars.githubusercontent.com/u/22795598?v=4?s=100" width="100px;" alt="Guillaume Dalle"/><br /><sub><b>Guillaume Dalle</b></sub></a><br /><a href="#ideas-gdalle" title="Ideas, Planning, & Feedback">🤔</a> <a href="#code-gdalle" title="Code">💻</a> <a href="#doc-gdalle" title="Documentation">📖</a> <a href="#maintenance-gdalle" title="Maintenance">🚧</a> <a href="#review-gdalle" title="Reviewed Pull Requests">👀</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="http://june.bzh"><img src="https://avatars.githubusercontent.com/u/976138?v=4?s=100" width="100px;" alt="June"/><br /><sub><b>June</b></sub></a><br /><a href="#ideas-junekiwi" title="Ideas, Planning, & Feedback">🤔</a></td>
     </tr>
   </tbody>
 </table>
