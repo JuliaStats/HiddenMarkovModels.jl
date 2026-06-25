@@ -97,7 +97,7 @@ Don't forget to add yourself to the contributors using the [All Contributors bot
 
 ## Acknowledgements
 
-A big thank you to [Maxime Mouchet](https://www.maxmouchet.com/) and [Jacob Schreiber](https://jmschrei.github.io/), the respective lead devs of alternative packages [HMMBase.jl](https://github.com/maxmouchet/HMMBase.jl) and [pomegranate](https://github.com/jmschrei/pomegranate), for their help and advice.
+A big thank you to [June](https://june.bzh/) and [Jacob Schreiber](https://jmschrei.github.io/), the respective lead devs of alternative packages [HMMBase.jl](https://github.com/junekiwi/HMMBase.jl) and [pomegranate](https://github.com/jmschrei/pomegranate), for their help and advice.
 Logo by [Clément Mantoux](https://cmantoux.github.io/) based on a portrait of [Andrey Markov](https://en.wikipedia.org/wiki/Andrey_Markov).
 
 ## Contributors
