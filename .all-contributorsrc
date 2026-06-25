@@ -20,6 +20,15 @@
         "maintenance",
         "review"
       ]
+    },
+    {
+      "login": "junekiwi",
+      "name": "June",
+      "avatar_url": "https://avatars.githubusercontent.com/u/976138?v=4",
+      "profile": "http://june.bzh",
+      "contributions": [
+        "ideas"
+      ]
     }
   ]
 }
