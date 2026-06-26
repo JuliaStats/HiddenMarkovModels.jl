@@ -11,7 +11,7 @@
 
 [![DOI](https://img.shields.io/badge/DOI-10.5281/zenodo.8128331-blue.svg)](https://doi.org/10.5281/zenodo.8128331)
 [![DOI](https://joss.theoj.org/papers/10.21105/joss.06436/status.svg)](https://doi.org/10.21105/joss.06436)
-[![All Contributors](https://img.shields.io/github/all-contributors/JuliaStats/HiddenMarkovModels.jl?color=ee8449&style=flat-square)](#contributors)
+[![All Contributors](https://img.shields.io/github/all-contributors/JuliaStats/HiddenMarkovModels.jl?color=ee8449)](#contributors)
 
 A Julia package for simulation, inference and learning of Hidden Markov Models with discrete states and discrete time.
 
