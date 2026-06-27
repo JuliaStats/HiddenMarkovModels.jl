@@ -19,6 +19,19 @@ abstract type ControlledEmission end
 
 DensityInterface.DensityKind(::ControlledEmission) = HasDensity()
 
+# Required interface fallbacks
+function DensityInterface.logdensityof(d::ControlledEmission, obs, control)
+    return throw(MethodError(logdensityof, (d, obs, control)))
+end
+
+function Random.rand(rng::AbstractRNG, d::ControlledEmission, control)
+    return throw(MethodError(rand, (rng, d, control)))
+end
+
+function StatsAPI.fit!(d::ControlledEmission, obs_seq, control_seq, weights)
+    return throw(MethodError(fit!, (d, obs_seq, control_seq, weights)))
+end
+
 """
 $(TYPEDEF)
 
