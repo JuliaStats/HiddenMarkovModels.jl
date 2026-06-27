@@ -26,6 +26,7 @@ seq_ends = cumsum(length.(obs_seqs))
 ```@docs
 AbstractHMM
 HMM
+ControlledEmissionHMM
 ```
 
 ## Interface
@@ -112,6 +113,11 @@ HiddenMarkovModels.log_initialization
 HiddenMarkovModels.log_transition_matrix
 HiddenMarkovModels.mul_rows_cols!
 HiddenMarkovModels.argmaxplus_transmul!
+HiddenMarkovModels.ControlledEmission
+HiddenMarkovModels.ControlBoundEmission
+HiddenMarkovModels.ControlBoundEmissionVector
+HiddenMarkovModels.duration_logdensityof
+HiddenMarkovModels.rand_duration
 ```
 
 ## Index

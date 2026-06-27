@@ -9,8 +9,9 @@
 [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 [![JET](https://img.shields.io/badge/%E2%9C%88%EF%B8%8F%20tested%20with%20-%20JET.jl%20-%20red)](https://github.com/aviatesk/JET.jl)
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.8128331.svg)](https://doi.org/10.5281/zenodo.8128331)
+[![DOI](https://img.shields.io/badge/DOI-10.5281/zenodo.8128331-blue.svg)](https://doi.org/10.5281/zenodo.8128331)
 [![DOI](https://joss.theoj.org/papers/10.21105/joss.06436/status.svg)](https://doi.org/10.21105/joss.06436)
+[![All Contributors](https://img.shields.io/github/all-contributors/JuliaStats/HiddenMarkovModels.jl?color=ee8449)](#contributors)
 
 A Julia package for simulation, inference and learning of Hidden Markov Models with discrete states and discrete time.
 
@@ -92,8 +93,30 @@ If this package is useful to your research, please cite the [JOSS paper](https:/
 
 If you spot a bug or want to ask about a new feature, please [open an issue](https://github.com/JuliaStats/HiddenMarkovModels.jl/issues) on the GitHub repository.
 Once the issue receives positive feedback, feel free to try and fix it with a pull request that follows the [BlueStyle](https://github.com/invenia/BlueStyle) guidelines.
+Don't forget to add yourself to the contributors using the [All Contributors bot](https://allcontributors.org/en/bot/usage/)!
 
 ## Acknowledgements
 
-A big thank you to [Maxime Mouchet](https://www.maxmouchet.com/) and [Jacob Schreiber](https://jmschrei.github.io/), the respective lead devs of alternative packages [HMMBase.jl](https://github.com/maxmouchet/HMMBase.jl) and [pomegranate](https://github.com/jmschrei/pomegranate), for their help and advice.
+A big thank you to [June](https://june.bzh/) and [Jacob Schreiber](https://jmschrei.github.io/), the respective lead devs of alternative packages [HMMBase.jl](https://github.com/junekiwi/HMMBase.jl) and [pomegranate](https://github.com/jmschrei/pomegranate), for their help and advice.
 Logo by [Clément Mantoux](https://cmantoux.github.io/) based on a portrait of [Andrey Markov](https://en.wikipedia.org/wiki/Andrey_Markov).
+
+## Contributors
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://gdalle.github.io/"><img src="https://avatars.githubusercontent.com/u/22795598?v=4?s=100" width="100px;" alt="Guillaume Dalle"/><br /><sub><b>Guillaume Dalle</b></sub></a><br /><a href="#ideas-gdalle" title="Ideas, Planning, & Feedback">🤔</a> <a href="#code-gdalle" title="Code">💻</a> <a href="#doc-gdalle" title="Documentation">📖</a> <a href="#maintenance-gdalle" title="Maintenance">🚧</a> <a href="#review-gdalle" title="Reviewed Pull Requests">👀</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="http://june.bzh"><img src="https://avatars.githubusercontent.com/u/976138?v=4?s=100" width="100px;" alt="June"/><br /><sub><b>June</b></sub></a><br /><a href="#ideas-junekiwi" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://jmschrei.github.io/"><img src="https://avatars.githubusercontent.com/u/3916816?v=4?s=100" width="100px;" alt="Jacob Schreiber"/><br /><sub><b>Jacob Schreiber</b></sub></a><br /><a href="#ideas-jmschrei" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/rsenne"><img src="https://avatars.githubusercontent.com/u/50930199?v=4?s=100" width="100px;" alt="Ryan Senne"/><br /><sub><b>Ryan Senne</b></sub></a><br /><a href="#ideas-rsenne" title="Ideas, Planning, & Feedback">🤔</a> <a href="#code-rsenne" title="Code">💻</a> <a href="#doc-rsenne" title="Documentation">📖</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->

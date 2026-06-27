@@ -149,3 +149,120 @@ end
         test_coherent_algorithms(rng, hmm, control_seq; seq_ends, hmm_guess, init=false)
     end
 end
+
+if TEST_SUITE != "HMMBase"
+    @testset verbose = true "GaussianGLM - Controlled HMM" begin
+        using DensityInterface
+        using StatsAPI
+
+        mutable struct GLMNormalModel{T} <: ControlledEmission
+            β0::T
+            β1::T
+            logσ::T
+        end
+
+        # Control-aware logdensity: accept any Real types and promote
+        function DensityInterface.logdensityof(
+            mod::GLMNormalModel, obs::Real, control::Real
+        )
+            T = promote_type(typeof(mod.β0), typeof(obs), typeof(control))
+            μ = T(mod.β0) + T(mod.β1) * T(control)
+            s = exp(T(mod.logσ))
+            z = (T(obs) - μ) / s
+            return -T(0.5) * log(T(2) * T(pi)) - log(s) - T(0.5) * z * z
+        end
+
+        # Control-aware sampling: accept any Real control
+        function Random.rand(rng::AbstractRNG, mod::GLMNormalModel, control::Real)
+            T = promote_type(typeof(mod.β0), typeof(control))
+            μ = T(mod.β0) + T(mod.β1) * T(control)
+            s = exp(T(mod.logσ))
+            return μ + s * randn(rng, T)
+        end
+
+        function StatsAPI.fit!(
+            mod::GLMNormalModel,
+            data::AbstractVector{<:Real},
+            control_seq::AbstractVector{<:Real},
+            weights::AbstractVector{<:Real},
+        )
+            n = length(data)
+            @assert length(control_seq) == n
+            @assert length(weights) == n
+
+            T = promote_type(
+                typeof(mod.β0), eltype(data), eltype(control_seq), eltype(weights)
+            )
+
+            S0 = zero(T)  # Σ w
+            S1 = zero(T)  # Σ w x
+            S2 = zero(T)  # Σ w x^2
+            T0 = zero(T)  # Σ w y
+            T1 = zero(T)  # Σ w x y
+
+            for i in 1:n
+                wi = T(weights[i])
+                xi = T(control_seq[i])
+                yi = T(data[i])
+                S0 += wi
+                S1 += wi * xi
+                S2 += wi * xi * xi
+                T0 += wi * yi
+                T1 += wi * xi * yi
+            end
+
+            D = S0 * S2 - S1 * S1
+
+            β0 = (T0 * S2 - T1 * S1) / D
+            β1 = (T1 * S0 - T0 * S1) / D
+
+            sse = zero(T)
+            for i in 1:n
+                wi = T(weights[i])
+                xi = T(control_seq[i])
+                yi = T(data[i])
+                r = yi - (β0 + β1 * xi)
+                sse += wi * r * r
+            end
+
+            σ = sqrt(sse / S0)
+
+            mod.β0 = β0
+            mod.β1 = β1
+            mod.logσ = log(σ)
+            return nothing
+        end
+
+        #=
+        create a true model and a guess model
+        =#
+        dists = [GLMNormalModel(-1.0, 2.0, log(0.5)), GLMNormalModel(0.0, -1.0, log(1.0))]
+
+        dists_guess = [
+            GLMNormalModel(-0.5, 1.0, log(1.0)), GLMNormalModel(0.0, 0.0, log(1.0))
+        ]
+
+        hmm_true = ControlledEmissionHMM(init, trans, dists)
+        hmm_guess = ControlledEmissionHMM(init_guess, trans_guess, dists_guess)
+
+        Tmin, Tmax = 50, 250
+        lens = rand(rng, Tmin:Tmax, K)
+        seq_ends_glm = cumsum(lens)
+
+        control_seq_glm = rand(rng, Uniform(-5.0, 5.0), sum(lens))
+        test_coherent_algorithms(
+            rng,
+            hmm_true,
+            control_seq_glm;
+            seq_ends=seq_ends_glm,
+            hmm_guess=hmm_guess,
+            init=false,
+        )
+        test_type_stability(
+            rng, hmm_true, control_seq_glm; seq_ends=seq_ends_glm, hmm_guess=hmm_guess
+        )
+        test_allocations(
+            rng, hmm_true, control_seq_glm; seq_ends=seq_ends_glm, hmm_guess=hmm_guess
+        )
+    end
+end
