@@ -20,7 +20,7 @@ end
 
 Perform some checks to rule out obvious inconsistencies with an `AbstractHMM` object.
 """
-function valid_hmm(hmm::AbstractHMM, control=nothing)
+function valid_hmm(hmm::AbstractHSMM, control=nothing)
     init = initialization(hmm)
     trans = transition_matrix(hmm, control)
     dists = obs_distributions(hmm, control)
@@ -34,4 +34,36 @@ function valid_hmm(hmm::AbstractHMM, control=nothing)
         return false
     end
     return true
+end
+
+"""
+    valid_hsmm(hsmm, control=nothing)
+
+Perform some checks to rule out obvious inconsistencies with an `AbstractHSMM` object.
+
+On top of the [`valid_hmm`](@ref)-style checks (probability initialization, stochastic transition
+matrix, matching dimensions, density-bearing observation distributions), this verifies:
+
+- the transition matrix has a zero diagonal (no self-transitions);
+- there is one density-bearing duration distribution per state.
+"""
+function valid_hsmm(hsmm::AbstractHSMM, control=nothing)
+    valid_hmm(hsmm, control) || return false
+
+    trans = transition_matrix(hsmm, control)
+    durations = duration_distributions(hsmm, control)
+    N = length(hsmm)
+
+    # One duration distribution per state.
+    length(durations) == N || return false
+
+    # No self-transitions (allowing for numerical noise).
+    for i in 1:N
+        if trans[i, i] > 1e-10
+            return false
+        end
+    end
+
+    # Duration distributions must carry a density.
+    return valid_dists(durations)
 end

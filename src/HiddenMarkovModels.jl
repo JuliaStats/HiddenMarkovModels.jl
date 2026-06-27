@@ -23,13 +23,14 @@ using SparseArrays: AbstractSparseArray, SparseMatrixCSC, nonzeros, nnz, nzrange
 using StatsAPI: StatsAPI, fit, fit!
 using StatsFuns: log2π
 
-export AbstractHMM, HMM, ControlledEmissionHMM
+export AbstractHSMM, HSMM, AbstractHMM, HMM, ControlledEmissionHMM
 export ControlledEmission, ControlBoundEmission, ControlBoundEmissionVector
-export initialization, transition_matrix, obs_distributions
+export initialization, transition_matrix, obs_distributions, duration_distributions
 export fit!, logdensityof, joint_logdensityof
 export viterbi, forward, forward_backward, baum_welch
 export seq_limits
 
+include("types/abstract_hsmm.jl")
 include("types/abstract_hmm.jl")
 
 include("utils/linalg.jl")
@@ -51,5 +52,6 @@ include("inference/chainrules.jl")
 
 include("types/hmm.jl")
 include("types/controlled_emission_hmm.jl")
+include("types/hsmm.jl")
 
 end
