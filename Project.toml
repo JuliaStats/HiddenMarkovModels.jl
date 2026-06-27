@@ -1,7 +1,7 @@
 name = "HiddenMarkovModels"
 uuid = "84ca31d5-effc-45e0-bfda-5a68cd981f47"
 authors = ["Guillaume Dalle"]
-version = "0.7.2"
+version = "0.7.1"
 
 [deps]
 ArgCheck = "dce04be8-c92d-5529-be00-80e4d2c0e197"
@@ -26,7 +26,7 @@ HiddenMarkovModelsDistributionsExt = "Distributions"
 ArgCheck = "2.3"
 ChainRulesCore = "1.16"
 DensityInterface = "0.4"
-Distributions = "0.25.0 - 0.25.128"
+Distributions = "0.25"
 DocStringExtensions = "0.9"
 FillArrays = "1"
 LinearAlgebra = "1"
