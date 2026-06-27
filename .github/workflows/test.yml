@@ -19,7 +19,7 @@ jobs:
       matrix:
         version:
           - "lts"
-          - "1.11"
+          - "1"
         test_suite:
           - "Standard"
           - "HMMBase"
