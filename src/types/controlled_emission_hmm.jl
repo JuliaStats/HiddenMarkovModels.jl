@@ -19,20 +19,6 @@ abstract type ControlledEmission end
 
 DensityInterface.DensityKind(::ControlledEmission) = HasDensity()
 
-# Required-interface fallbacks for the control-aware methods. Concrete subtypes must override
-# these; the abstract methods make the interface complete for static analysis (a missing
-# implementation is reached through `ControlBoundEmission`) and throw a `MethodError` whose display
-# is augmented by an error hint (see `__init__`). No `rand` fallback is defined: a generic
-# `rand(::AbstractRNG, ::ControlledEmission, control)` would be ambiguous with Base's
-# `rand(rng, X, dims::Integer...)`, and Base already satisfies static analysis for that call.
-function DensityInterface.logdensityof(d::ControlledEmission, obs, control)
-    return throw(MethodError(logdensityof, (d, obs, control)))
-end
-
-function StatsAPI.fit!(d::ControlledEmission, obs_seq, control_seq, weights)
-    return throw(MethodError(fit!, (d, obs_seq, control_seq, weights)))
-end
-
 """
 $(TYPEDEF)
 
@@ -285,34 +271,6 @@ function __init__()
                 io,
                 "\nHint: `ControlledEmissionHMM` requires `control_seq`. " *
                 "Call `fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends=...)` instead.",
-            )
-
-        elseif exc.f === logdensityof &&
-            length(argtypes) == 3 &&
-            argtypes[1] <: ControlledEmission
-            print(
-                io,
-                "\nHint: the emission type `$(argtypes[1])` <: ControlledEmission must implement " *
-                "`DensityInterface.logdensityof(dist, obs, control)`.",
-            )
-
-        elseif exc.f === rand &&
-            length(argtypes) == 3 &&
-            argtypes[1] <: AbstractRNG &&
-            argtypes[2] <: ControlledEmission
-            print(
-                io,
-                "\nHint: the emission type `$(argtypes[2])` <: ControlledEmission must implement " *
-                "`Random.rand(rng, dist, control)`.",
-            )
-
-        elseif exc.f === StatsAPI.fit! &&
-            length(argtypes) == 4 &&
-            argtypes[1] <: ControlledEmission
-            print(
-                io,
-                "\nHint: the emission type `$(argtypes[1])` <: ControlledEmission must implement " *
-                "`StatsAPI.fit!(dist, obs_seq, control_seq, weights)`.",
             )
         end
     end
