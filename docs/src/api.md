@@ -118,6 +118,8 @@ HiddenMarkovModels.ControlBoundEmission
 HiddenMarkovModels.ControlBoundEmissionVector
 HiddenMarkovModels.duration_logdensityof
 HiddenMarkovModels.rand_duration
+HiddenMarkovModels.AbstractHSMM
+HiddenMarkovModels.HSMM
 ```
 
 ## Index
