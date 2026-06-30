@@ -1,5 +1,12 @@
+using DensityInterface: DensityKind, HasDensity
 using HiddenMarkovModels
-using HiddenMarkovModels: AbstractHSMM, duration_distributions, valid_hsmm
+using HiddenMarkovModels:
+    AbstractHSMM,
+    duration_distributions,
+    elementwise_log,
+    log_initialization,
+    log_transition_matrix,
+    valid_hsmm
 using Distributions: Geometric, Normal
 using StableRNGs: StableRNG
 using Test
@@ -20,6 +27,9 @@ using Test
         @test obs_distributions(hsmm) === dists
         @test duration_distributions(hsmm) === dur_dists
         @test valid_hsmm(hsmm)
+        @test log_initialization(hsmm) == elementwise_log(init)
+        @test log_transition_matrix(hsmm) == elementwise_log(trans)
+        @test DensityKind(hsmm) == HasDensity()
     end
 
     @testset "Constructor rejects self-transitions (no silent zeroing)" begin
