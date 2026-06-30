@@ -120,6 +120,8 @@ HiddenMarkovModels.duration_logdensityof
 HiddenMarkovModels.rand_duration
 HiddenMarkovModels.AbstractHSMM
 HiddenMarkovModels.HSMM
+HiddenMarkovModels.duration_distributions
+HiddenMarkovModels.valid_hsmm
 ```
 
 ## Index
