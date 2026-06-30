@@ -9,14 +9,6 @@ using Random: Random, AbstractRNG, Xoshiro
 using Test
 using Test: TestLogger
 
-struct TestControlledEmissionDist <: ControlledEmission end
-
-# `DensityKind` is inherited from the `ControlledEmission` abstract supertype.
-function DensityInterface.logdensityof(::TestControlledEmissionDist, obs, control)
-    return -(obs - control)^2
-end
-Random.rand(::AbstractRNG, ::TestControlledEmissionDist, control) = control
-
 function thrown_error(f)
     try
         f()
