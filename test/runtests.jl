@@ -7,6 +7,8 @@ using Literate
 using Pkg
 using Test
 
+include("utils.jl")
+
 TEST_SUITE = get(ENV, "JULIA_HMM_TEST_SUITE", "Standard")
 if TEST_SUITE == "HMMBase"
     Pkg.add("HMMBase")
