@@ -58,7 +58,7 @@ function valid_hsmm(hsmm::AbstractHSMM, control=nothing)
     length(durations) == N || return false
 
     # No self-transitions (allowing for numerical noise).
-    all(<=(eps(eltype(trans))), diag(trans)) || return false
+    all(<=(eps(eltype(trans))), Diagonal(trans)) || return false
 
     # Duration distributions must carry a density.
     return valid_dists(durations)

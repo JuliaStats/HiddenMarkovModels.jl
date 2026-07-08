@@ -3,6 +3,7 @@ using HiddenMarkovModels
 using HiddenMarkovModels:
     AbstractHSMM,
     duration_distributions,
+    duration_logdensity_type,
     elementwise_log,
     log_initialization,
     log_transition_matrix,
@@ -70,6 +71,48 @@ end
         (; state_seq, duration_seq) = rand(StableRNG(11), hsmm, 100)
         @test all(duration_seq .== 1)
         @test all(state_seq[t] != state_seq[t + 1] for t in 1:99)
+    end
+end
+
+@testset "duration_logdensity_type" begin
+    init = [0.6, 0.4]
+    trans = [0.0 1.0; 1.0 0.0]
+    dists = [Normal(0.0, 1.0), Normal(5.0, 1.0)]
+
+    @testset "HSMM returns the duration logdensity type" begin
+        hsmm = HSMM(init, trans, dists, [Geometric(0.4), Geometric(0.6)])
+        @test duration_logdensity_type(hsmm, nothing) === Float64
+
+        hsmm32 = HSMM(init, trans, dists, [Geometric(0.4f0), Geometric(0.6f0)])
+        @test duration_logdensity_type(hsmm32, nothing) === Float32
+    end
+
+    @testset "Feeds into eltype promotion" begin
+        #=
+        Everything is Float32 except the duration logdensities, which must drive the
+        promotion up to Float64.
+        =#
+        init32 = Float32[0.6, 0.4]
+        trans32 = Float32[0.0 1.0; 1.0 0.0]
+        dists32 = [Normal(0.0f0, 1.0f0), Normal(5.0f0, 1.0f0)]
+        hsmm = HSMM(init32, trans32, dists32, [Geometric(0.4), Geometric(0.6)])
+        @test eltype(hsmm, 0.0f0, nothing) === Float64
+    end
+
+    @testset "HMM no-op returns Union{}" begin
+        hmm = HMM([0.5, 0.5], [0.7 0.3; 0.2 0.8], dists)
+        @test duration_logdensity_type(hmm, nothing) === Union{}
+        #=
+        Union{} is the neutral element of promote_type, so the HMM eltype is
+        unaffected by the HSMM machinery.
+        =#
+        @test eltype(hmm, 0.0, nothing) === Float64
+        hmm32 = HMM(
+            Float32[0.5, 0.5],
+            Float32[0.7 0.3; 0.2 0.8],
+            [Normal(0.0f0, 1.0f0), Normal(5.0f0, 1.0f0)],
+        )
+        @test eltype(hmm32, 0.0f0, nothing) === Float32
     end
 end
 
