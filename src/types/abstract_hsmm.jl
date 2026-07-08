@@ -92,6 +92,16 @@ Return the number of states of `model` (any `AbstractHSMM`, including `AbstractH
 """
 Base.length(model::AbstractHSMM) = length(initialization(model))
 
+#= 
+We split out the the type handling for duration logdensities, since HMMs don't have 
+duration distributions. This allows [`AbstractHMM`](@ref) to inherit the `eltype`
+method defined here.
+=#
+function duration_logdensity_type(model::AbstractHSMM, control)
+    dist = duration_distributions(model, control)[1]
+    return typeof(duration_logdensityof(dist, 1))
+end
+
 """
     eltype(model, obs, control)
 
@@ -104,7 +114,9 @@ function Base.eltype(model::AbstractHSMM, obs, control)
     trans_type = eltype(transition_matrix(model, control))
     dist = obs_distributions(model, control)[1]
     logdensity_type = typeof(logdensityof(dist, obs))
-    return promote_type(init_type, trans_type, logdensity_type)
+    return promote_type(
+        init_type, trans_type, logdensity_type, duration_logdensity_type(model, control)
+    )
 end
 
 """
@@ -148,6 +160,19 @@ duration_distributions(model::AbstractHSMM, ::Nothing) = duration_distributions(
 Return the prior loglikelihood associated with the parameters of `model`.
 """
 DensityInterface.logdensityof(model::AbstractHSMM) = false
+
+## Fill logdensities
+
+function obs_logdensities!(
+    logb::AbstractVector{T}, hmm::AbstractHSMM, obs, control; error_if_not_finite::Bool=true
+) where {T}
+    dists = obs_distributions(hmm, control)
+    @simd for i in eachindex(logb, dists)
+        logb[i] = logdensityof(dists[i], obs)
+    end
+    error_if_not_finite && @argcheck maximum(logb) < typemax(T)
+    return nothing
+end
 
 ## Sampling
 

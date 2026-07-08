@@ -16,7 +16,7 @@ using ChainRulesCore: ChainRulesCore, NoTangent, RuleConfig, rrule_via_ad
 using DensityInterface: DensityInterface, DensityKind, HasDensity, NoDensity, logdensityof
 using DocStringExtensions
 using FillArrays: Fill
-using LinearAlgebra: Transpose, axpy!, dot, ldiv!, lmul!, mul!, parent
+using LinearAlgebra: Transpose, axpy!, diag, dot, ldiv!, lmul!, mul!, parent
 using ProgressLogging: @withprogress, @logprogress
 using Random: Random, AbstractRNG, default_rng
 using SparseArrays: AbstractSparseArray, SparseMatrixCSC, nonzeros, nnz, nzrange, rowvals
