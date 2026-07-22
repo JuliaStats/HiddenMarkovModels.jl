@@ -7,10 +7,6 @@ An `AbstractHSMM` explicitly models state durations through a per-state duration
 Sojourn lengths are drawn from those distributions, so self-transitions in the transition matrix
 are forbidden (the diagonal must be zero).
 
-[`AbstractHMM`](@ref) is a subtype of `AbstractHSMM`: every HMM is mathematically an HSMM whose
-sojourn lengths follow a geometric distribution encoded by the diagonal of the transition matrix.
-The interface defined here is inherited by `AbstractHMM`.
-
 # Interface
 
 To create your own subtype of `AbstractHSMM`, you need to implement the following methods:
@@ -26,47 +22,11 @@ To create your own subtype of `AbstractHSMM`, you need to implement the followin
 Any `AbstractHSMM` which satisfies the interface can be given to the following functions:
 
 - [`rand`](@ref)
-"""
-abstract type AbstractHSMM end
 
-@inline DensityInterface.DensityKind(::AbstractHSMM) = HasDensity()
+"""
+abstract type AbstractHSMM <: AbstractLatentStateModel end
 
 ## Interface
-
-"""
-    initialization(model)
-
-Return the vector of initial state probabilities for `model` (any `AbstractHSMM`, including
-`AbstractHMM` subtypes).
-"""
-function initialization end
-
-"""
-    transition_matrix(model)
-    transition_matrix(model, control)
-
-Return the matrix of state transition probabilities for `model` (possibly when `control` is applied).
-
-For an [`AbstractHSMM`](@ref) the diagonal of this matrix must be zero (no self-transitions).
-
-!!! note
-    When processing sequences, the control at time `t` influences the transition from time `t-1` to `t` (since version 0.7 of the package).
-"""
-function transition_matrix end
-
-"""
-    obs_distributions(model)
-    obs_distributions(model, control)
-
-Return a vector of observation distributions, one for each state of `model` (possibly when `control` is applied).
-
-These distribution objects should implement
-
-- `Random.rand(rng, dist)` for sampling
-- `DensityInterface.logdensityof(dist, obs)` for inference
-- `StatsAPI.fit!(dist, obs_seq, weight_seq)` for learning
-"""
-function obs_distributions end
 
 """
     duration_distributions(model)
@@ -85,93 +45,26 @@ should implement
 """
 function duration_distributions end
 
-"""
-    length(model)
+duration_distributions(model::AbstractHSMM, ::Nothing) = duration_distributions(model)
 
-Return the number of states of `model` (any `AbstractHSMM`, including `AbstractHMM`).
-"""
-Base.length(model::AbstractHSMM) = length(initialization(model))
-
-#= 
-We split out the the type handling for duration logdensities, since HMMs don't have 
-duration distributions. This allows [`AbstractHMM`](@ref) to inherit the `eltype`
-method defined here.
+#=
+We split out the type handling for duration logdensities so that the shared `eltype` promotion
+defined on `AbstractLatentStateModel` can be reused by both HMMs and HSMMs, with only the
+HSMM branch folding in the duration term.
 =#
 function duration_logdensity_type(model::AbstractHSMM, control)
     dist = duration_distributions(model, control)[1]
     return typeof(duration_logdensityof(dist, 1))
 end
 
-"""
-    eltype(model, obs, control)
-
-Return a type that can accommodate forward-backward computations for `model` on observations similar to `obs`.
-
-It is typically a promotion between the element type of the initialization, the element type of the transition matrix, and the type of an observation logdensity evaluated at `obs`.
-"""
-function Base.eltype(model::AbstractHSMM, obs, control)
-    init_type = eltype(initialization(model))
-    trans_type = eltype(transition_matrix(model, control))
-    dist = obs_distributions(model, control)[1]
-    logdensity_type = typeof(logdensityof(dist, obs))
-    return promote_type(
-        init_type, trans_type, logdensity_type, duration_logdensity_type(model, control)
-    )
-end
-
-"""
-    log_initialization(model)
-
-Return the vector of initial state log-probabilities for `model`.
-
-Falls back on `initialization`.
-"""
-log_initialization(model::AbstractHSMM) = elementwise_log(initialization(model))
-
-"""
-    log_transition_matrix(model)
-    log_transition_matrix(model, control)
-
-Return the matrix of state transition log-probabilities for `model` (possibly when `control` is applied).
-
-Falls back on `transition_matrix`.
-
-!!! note
-    When processing sequences, the control at time `t` influences the transition from time `t-1` to `t` (since version 0.7 of the package).
-"""
-log_transition_matrix(model::AbstractHSMM) = elementwise_log(transition_matrix(model))
-
-function log_transition_matrix(model::AbstractHSMM, control)
-    return elementwise_log(transition_matrix(model, control))
-end
-
-## Fallbacks for no control
-
-transition_matrix(model::AbstractHSMM, ::Nothing) = transition_matrix(model)
-log_transition_matrix(model::AbstractHSMM, ::Nothing) = log_transition_matrix(model)
-obs_distributions(model::AbstractHSMM, ::Nothing) = obs_distributions(model)
-duration_distributions(model::AbstractHSMM, ::Nothing) = duration_distributions(model)
-
-## Prior
-
-"""
-    logdensityof(model)
-
-Return the prior loglikelihood associated with the parameters of `model`.
-"""
-DensityInterface.logdensityof(model::AbstractHSMM) = false
-
-## Fill logdensities
-
-function obs_logdensities!(
-    logb::AbstractVector{T}, hmm::AbstractHSMM, obs, control; error_if_not_finite::Bool=true
-) where {T}
-    dists = obs_distributions(hmm, control)
-    @simd for i in eachindex(logb, dists)
-        logb[i] = logdensityof(dists[i], obs)
-    end
-    error_if_not_finite && @argcheck maximum(logb) < typemax(T)
-    return nothing
+#=
+Extend the shared `eltype` (which promotes the initialization, transition and observation
+logdensity types) with the duration logdensity type, since HSMM forward-backward also accumulates
+duration terms.
+=#
+function Base.eltype(hsmm::AbstractHSMM, obs, control)
+    base_type = @invoke Base.eltype(hsmm::AbstractLatentStateModel, obs, control)
+    return promote_type(base_type, duration_logdensity_type(hsmm, control))
 end
 
 ## Sampling
@@ -234,16 +127,4 @@ function Random.rand(rng::AbstractRNG, hsmm::AbstractHSMM, control_seq::Abstract
     end
 
     return (; state_seq=state_seq, obs_seq=obs_seq, duration_seq=duration_seq)
-end
-
-function Random.rand(hsmm::AbstractHSMM, control_seq::AbstractVector)
-    return rand(default_rng(), hsmm, control_seq)
-end
-
-function Random.rand(rng::AbstractRNG, hsmm::AbstractHSMM, T::Integer)
-    return rand(rng, hsmm, Fill(nothing, T))
-end
-
-function Random.rand(hsmm::AbstractHSMM, T::Integer)
-    return rand(hsmm, Fill(nothing, T))
 end

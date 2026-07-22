@@ -19,8 +19,12 @@ end
     valid_hmm(hmm)
 
 Perform some checks to rule out obvious inconsistencies with an `AbstractHMM` object.
+
+Dispatches on [`AbstractLatentStateModel`](@ref) so the same structural checks (probability
+initialization, stochastic transition matrix, matching dimensions, density-bearing observation
+distributions) back both [`valid_hmm`](@ref) and [`valid_hsmm`](@ref).
 """
-function valid_hmm(hmm::AbstractHSMM, control=nothing)
+function valid_hmm(hmm::AbstractLatentStateModel, control=nothing)
     init = initialization(hmm)
     trans = transition_matrix(hmm, control)
     dists = obs_distributions(hmm, control)

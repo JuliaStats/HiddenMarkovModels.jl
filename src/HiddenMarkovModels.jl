@@ -23,13 +23,14 @@ using SparseArrays: AbstractSparseArray, SparseMatrixCSC, nonzeros, nnz, nzrange
 using StatsAPI: StatsAPI, fit, fit!
 using StatsFuns: log2π
 
-export AbstractHSMM, HSMM, AbstractHMM, HMM, ControlledEmissionHMM
+export AbstractLatentStateModel, AbstractHSMM, HSMM, AbstractHMM, HMM, ControlledEmissionHMM
 export ControlledEmission, ControlBoundEmission, ControlBoundEmissionVector
 export initialization, transition_matrix, obs_distributions, duration_distributions
 export fit!, logdensityof, joint_logdensityof
 export viterbi, forward, forward_backward, baum_welch
 export seq_limits
 
+include("types/abstract_latent_state_model.jl")
 include("types/abstract_hsmm.jl")
 include("types/abstract_hmm.jl")
 

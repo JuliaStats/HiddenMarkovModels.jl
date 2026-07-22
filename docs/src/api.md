@@ -24,6 +24,7 @@ seq_ends = cumsum(length.(obs_seqs))
 ## Types
 
 ```@docs
+AbstractLatentStateModel
 AbstractHMM
 HMM
 ControlledEmissionHMM

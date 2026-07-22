@@ -1,6 +1,7 @@
 using DensityInterface: DensityKind, HasDensity
 using HiddenMarkovModels
 using HiddenMarkovModels:
+    AbstractLatentStateModel,
     AbstractHSMM,
     duration_distributions,
     duration_logdensity_type,
@@ -99,13 +100,9 @@ end
         @test eltype(hsmm, 0.0f0, nothing) === Float64
     end
 
-    @testset "HMM no-op returns Union{}" begin
+    @testset "HMM eltype ignores duration machinery" begin
         hmm = HMM([0.5, 0.5], [0.7 0.3; 0.2 0.8], dists)
-        @test duration_logdensity_type(hmm, nothing) === Union{}
-        #=
-        Union{} is the neutral element of promote_type, so the HMM eltype is
-        unaffected by the HSMM machinery.
-        =#
+        @test !hasmethod(duration_logdensity_type, Tuple{typeof(hmm),Nothing})
         @test eltype(hmm, 0.0, nothing) === Float64
         hmm32 = HMM(
             Float32[0.5, 0.5],
@@ -116,21 +113,23 @@ end
     end
 end
 
-@testset "AbstractHMM <: AbstractHSMM" begin
+@testset "Type hierarchy: AbstractHMM and AbstractHSMM are siblings" begin
     init = [0.5, 0.5]
     trans = [0.7 0.3; 0.2 0.8]
     dists = [Normal(0.0), Normal(5.0)]
     hmm = HMM(init, trans, dists)
 
-    @testset "Subtype relationship" begin
+    @testset "Sibling relationship under AbstractLatentStateModel" begin
         @test HMM <: AbstractHMM
-        @test AbstractHMM <: AbstractHSMM
-        @test hmm isa AbstractHSMM
+        @test AbstractHMM <: AbstractLatentStateModel
+        @test AbstractHSMM <: AbstractLatentStateModel
+        @test !(AbstractHMM <: AbstractHSMM)
+        @test !(AbstractHSMM <: AbstractHMM)
+        @test hmm isa AbstractLatentStateModel
+        @test !(hmm isa AbstractHSMM)
     end
 
     @testset "HMM does not gain a duration_distributions method" begin
-        # An HMM is structurally an AbstractHSMM for code reuse, but it deliberately has no
-        # duration distributions: regular HMM usage is unaffected by the HSMM machinery.
         @test !hasmethod(duration_distributions, Tuple{typeof(hmm)})
     end
 
