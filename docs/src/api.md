@@ -24,7 +24,6 @@ seq_ends = cumsum(length.(obs_seqs))
 ## Types
 
 ```@docs
-AbstractLatentStateModel
 AbstractHMM
 HMM
 ControlledEmissionHMM
@@ -119,6 +118,7 @@ HiddenMarkovModels.ControlBoundEmission
 HiddenMarkovModels.ControlBoundEmissionVector
 HiddenMarkovModels.duration_logdensityof
 HiddenMarkovModels.rand_duration
+HiddenMarkovModels.AbstractLatentStateModel
 HiddenMarkovModels.AbstractHSMM
 HiddenMarkovModels.HSMM
 HiddenMarkovModels.duration_distributions
