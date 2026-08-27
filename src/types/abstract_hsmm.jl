@@ -22,6 +22,9 @@ To create your own subtype of `AbstractHSMM`, you need to implement the followin
 Any `AbstractHSMM` which satisfies the interface can be given to the following functions:
 
 - [`rand`](@ref)
+- [`logdensityof`](@ref)
+- [`joint_logdensityof`](@ref)
+- [`forward`](@ref)
 
 """
 abstract type AbstractHSMM <: AbstractLatentStateModel end
