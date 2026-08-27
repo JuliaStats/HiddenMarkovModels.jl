@@ -1,15 +1,18 @@
-using DensityInterface: DensityKind, HasDensity
+using DensityInterface: DensityInterface, DensityKind, HasDensity, logdensityof
 using HiddenMarkovModels
 using HiddenMarkovModels:
     AbstractLatentStateModel,
     AbstractHSMM,
     duration_distributions,
+    duration_logdensityof,
+    duration_logsurvival,
     duration_logdensity_type,
     elementwise_log,
     log_initialization,
     log_transition_matrix,
     valid_hsmm
 using Distributions: Geometric, Normal
+using Random: AbstractRNG
 using StableRNGs: StableRNG
 using Test
 
@@ -139,5 +142,90 @@ end
         @test !hasproperty(out, :duration_seq)
         @test length(out.state_seq) == 50
         @test length(out.obs_seq) == 50
+    end
+end
+
+@testset "HSMM joint_logdensityof" begin
+    init = [0.6, 0.4]
+    trans = [0.0 1.0; 1.0 0.0]
+    dists = [Normal(0.0, 1.0), Normal(5.0, 1.0)]
+    dur_dists = [Geometric(0.4), Geometric(0.6)]
+
+    @testset "Hand-computed value" begin
+        hsmm = HSMM(init, trans, dists, dur_dists)
+        # states [1, 1, 2] = one full segment (state 1, length 2), then a censored
+        # final segment (state 2, length 1 observed).
+        state_seq = [1, 1, 2]
+        obs_seq = [0.3, -0.1, 5.2]
+        expected =
+            log(init[1]) +
+            duration_logdensityof(dur_dists[1], 2) +
+            log(trans[1, 2]) +
+            duration_logsurvival(dur_dists[2], 1) +
+            logdensityof(dists[1], obs_seq[1]) +
+            logdensityof(dists[1], obs_seq[2]) +
+            logdensityof(dists[2], obs_seq[3])
+        @test joint_logdensityof(hsmm, obs_seq, state_seq) ≈ expected
+    end
+
+    @testset "Survival term" begin
+        d = Geometric(0.4)
+        # P(D >= 1) == 1 for any sojourn distribution.
+        @test duration_logsurvival(d, 1) ≈ 0.0
+        # P(D >= k) == 1 - sum_{j < k} P(D == j), by construction.
+        for k in 1:6
+            head = sum(exp(duration_logdensityof(d, j)) for j in 1:(k - 1); init=0.0)
+            @test duration_logsurvival(d, k) ≈ log1p(-head)
+        end
+        # Geometric sojourns have the closed form P(D >= k) == (1 - p)^(k - 1).
+        for k in 1:6
+            @test duration_logsurvival(d, k) ≈ (k - 1) * log(1 - 0.4)
+        end
+    end
+
+    @testset "Exact equivalence with an HMM under geometric sojourns" begin
+        #= An HMM with self-transition probability A[i, i] is exactly an HSMM with
+        geometric sojourns and the self-transitions renormalized away. The equality
+        below holds only because the final segment is right-censored. =#
+        hmm_trans = [0.7 0.2 0.1; 0.3 0.5 0.2; 0.25 0.25 0.5]
+        hmm_init = [0.5, 0.3, 0.2]
+        hmm_dists = [Normal(0.0), Normal(5.0), Normal(10.0)]
+        hmm = HMM(hmm_init, hmm_trans, hmm_dists)
+
+        N = length(hmm_init)
+        hsmm_trans = [
+            i == j ? 0.0 : hmm_trans[i, j] / (1 - hmm_trans[i, i]) for i in 1:N, j in 1:N
+        ]
+        hsmm_durs = [Geometric(1 - hmm_trans[i, i]) for i in 1:N]
+        hsmm = HSMM(hmm_init, hsmm_trans, hmm_dists, hsmm_durs)
+
+        rng = StableRNG(63)
+        for _ in 1:20
+            (; state_seq, obs_seq) = rand(rng, hmm, 12)
+            @test joint_logdensityof(hsmm, obs_seq, state_seq) ≈
+                joint_logdensityof(hmm, obs_seq, state_seq)
+        end
+    end
+
+    @testset "Multiple sequences" begin
+        hsmm = HSMM(init, trans, dists, dur_dists)
+        rng = StableRNG(15)
+        sims = [rand(rng, hsmm, T) for T in (4, 7, 5)]
+        obs_seq = reduce(vcat, sim.obs_seq for sim in sims)
+        state_seq = reduce(vcat, sim.state_seq for sim in sims)
+        seq_ends = cumsum([length(sim.obs_seq) for sim in sims])
+        @test joint_logdensityof(hsmm, obs_seq, state_seq; seq_ends) ≈
+            sum(joint_logdensityof(hsmm, sim.obs_seq, sim.state_seq) for sim in sims)
+    end
+
+    @testset "Type promotion" begin
+        hsmm32 = HSMM(
+            Float32[0.6, 0.4],
+            Float32[0.0 1.0; 1.0 0.0],
+            [Normal(0.0f0, 1.0f0), Normal(5.0f0, 1.0f0)],
+            dur_dists,
+        )
+        # Float32 model with Float64 duration distributions promotes to Float64.
+        @test joint_logdensityof(hsmm32, [0.0f0, 5.0f0], [1, 2]) isa Float64
     end
 end

@@ -28,3 +28,20 @@ function rand_duration(rng::AbstractRNG, dist)
 end
 
 rand_duration(dist) = rand_duration(default_rng(), dist)
+
+"""
+$(SIGNATURES)
+
+Return log P(sojourn time >= k) for the duration distribution dist.
+
+This is the right-censoring term for a sequence's final segment. It is computed from
+P(sojourn time <= k - 1) using duration_logdensityof, avoiding explicit summation
+over a potentially unbounded tail.
+"""
+function duration_logsurvival(dist, k::Integer)
+    log_head = oftype(duration_logdensityof(dist, one(k)), -Inf)
+    for d in one(k):(k - one(k))
+        log_head = logaddexp(log_head, duration_logdensityof(dist, d))
+    end
+    return log1mexp(min(log_head, zero(log_head)))
+end

@@ -21,7 +21,7 @@ using ProgressLogging: @withprogress, @logprogress
 using Random: Random, AbstractRNG, default_rng
 using SparseArrays: AbstractSparseArray, SparseMatrixCSC, nonzeros, nnz, nzrange, rowvals
 using StatsAPI: StatsAPI, fit, fit!
-using StatsFuns: log2π
+using StatsFuns: log2π, log1mexp, logaddexp
 
 export AbstractHSMM, HSMM, AbstractHMM, HMM, ControlledEmissionHMM
 export ControlledEmission, ControlBoundEmission, ControlBoundEmissionVector
