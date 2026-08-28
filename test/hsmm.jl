@@ -296,6 +296,19 @@ function brute_force_logdensityof(hsmm, obs_seq, control_seq, N)
     )
 end
 
+# An independent oracle for the filtered state marginals returned by `forward`.
+function brute_force_marginals(hsmm, obs_seq, control_seq, N)
+    T = length(obs_seq)
+    α = zeros(N, T)
+    for t in 1:T
+        for s in all_state_seqs(N, t)
+            α[s[t], t] += exp(joint_logdensityof(hsmm, obs_seq[1:t], s, control_seq[1:t]))
+        end
+        α[:, t] ./= sum(α[:, t])
+    end
+    return α
+end
+
 # Ensure `@allocated` sees concretely typed arguments.
 function call_forward!(storage, hsmm, obs_seq, control_seq, seq_ends)
     return forward!(storage, hsmm, obs_seq, control_seq; seq_ends)
@@ -370,6 +383,23 @@ end
             (; obs_seq) = rand(rng, hmm, T)
             @test logdensityof(hsmm, obs_seq; max_duration=T) ≈ logdensityof(hmm, obs_seq)
         end
+
+        # Regression test for precision loss when survival is computed from the head complement.
+        long_trans = [0.8 0.12 0.08; 0.1 0.85 0.05; 0.15 0.1 0.75]
+        long_hmm = HMM(
+            [0.4, 0.35, 0.25], long_trans, [Normal(2.0), Normal(4.0), Normal(6.0)]
+        )
+        long_hsmm = HSMM(
+            [0.4, 0.35, 0.25],
+            [
+                i == j ? 0.0 : long_trans[i, j] / (1 - long_trans[i, i]) for i in 1:N,
+                j in 1:N
+            ],
+            [Normal(2.0), Normal(4.0), Normal(6.0)],
+            [Geometric(1 - long_trans[i, i]) for i in 1:N],
+        )
+        long_obs = randn(StableRNG(65), 500)
+        @test logdensityof(long_hsmm, long_obs) ≈ logdensityof(long_hmm, long_obs)
     end
 
     @testset "Multiple sequences of differing lengths" begin
@@ -460,6 +490,27 @@ end
         @test only(logL) == -Inf
     end
 
+    @testset "Zero-probability observation before the last timestep" begin
+        # An impossible observation must not poison later prefix differences.
+        init = [0.5, 0.5]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Categorical([0.0, 1.0]), Categorical([0.5, 0.5])]
+        hsmm = HSMM(init, trans, dists, [Geometric(0.4), Geometric(0.6)])
+        for obs_seq in ([1, 2, 2], [2, 1, 2, 2], [2, 2, 1, 2, 2, 2])
+            control_seq = fill(nothing, length(obs_seq))
+            expected = brute_force_logdensityof(hsmm, obs_seq, control_seq, 2)
+            @test isfinite(expected)
+            @test logdensityof(hsmm, obs_seq) ≈ expected
+        end
+        @test logdensityof(hsmm, [1, 2, 2]) ≈ -1.83258146374831
+
+        # The impossible emission only affects segments that contain it.
+        α, _ = forward(hsmm, [1, 2, 2])
+        @test α[:, 1] ≈ [0.0, 1.0]
+        @test α[:, 2] ≈ [0.75, 0.25]
+        @test α ≈ brute_force_marginals(hsmm, [1, 2, 2], fill(nothing, 3), 2)
+    end
+
     @testset "max_duration" begin
         init = [0.5, 0.5]
         trans = [0.0 1.0; 1.0 0.0]
@@ -476,6 +527,9 @@ end
         end
         errors = [abs(logdensityof(hsmm, obs_seq; max_duration=d) - exact) for d in 1:T]
         @test issorted(errors; rev=true)
+        for d in 1:T
+            @test logdensityof(hsmm, obs_seq; max_duration=d) <= exact
+        end
         @test errors[1] > 1e-3
         @test errors[T] == 0
         @test_throws ArgumentError logdensityof(hsmm, obs_seq; max_duration=0)
@@ -495,13 +549,22 @@ end
         end
         @test logL[1] ≈ logdensityof(hsmm, obs_seq)
 
-        storage = initialize_hsmm_forward(
-            hsmm, obs_seq, fill(nothing, T); seq_ends=(T,), max_duration=T
-        )
-        forward!(storage, hsmm, obs_seq, fill(nothing, T); seq_ends=(T,))
-        for t in 1:T
-            @test storage.log_prefix[t] ≈ logdensityof(hsmm, obs_seq[1:t])
-            @test storage.α[:, t] ≈ forward(hsmm, obs_seq[1:t])[1][:, t]
+        # Check every prefix against brute-force marginalization.
+        rng = StableRNG(303)
+        for N in 2:3, T in 5:7
+            hsmm = rand_hsmm(rng, N)
+            obs_seq = randn(rng, T)
+            control_seq = fill(nothing, T)
+            storage = initialize_hsmm_forward(
+                hsmm, obs_seq, control_seq; seq_ends=(T,), max_duration=T
+            )
+            forward!(storage, hsmm, obs_seq, control_seq; seq_ends=(T,))
+            expected = brute_force_marginals(hsmm, obs_seq, control_seq, N)
+            for t in 1:T
+                @test storage.log_prefix[t] ≈
+                    brute_force_logdensityof(hsmm, obs_seq[1:t], control_seq[1:t], N)
+                @test storage.α[:, t] ≈ expected[:, t]
+            end
         end
     end
 

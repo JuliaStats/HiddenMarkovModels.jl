@@ -18,6 +18,7 @@ struct HSMMForwardStorage{R}
     log_ongoing::Matrix{R}
     log_prefix::Vector{R}
     cum_log_obs::Matrix{R}
+    obs_zeros::Matrix{Int}
     log_dur::Vector{Matrix{R}}
     log_surv::Vector{Matrix{R}}
     incoming::Vector{Vector{R}}
@@ -34,6 +35,10 @@ end
 
 function uniform_controls(control_seq::AbstractVector)
     return control_seq isa AbstractFill || eltype(control_seq) === Nothing
+end
+
+function sequence_max_duration(max_duration::Integer, t1::Integer, t2::Integer)
+    return min(max_duration, t2 - t1 + 1)
 end
 
 """
@@ -58,16 +63,19 @@ function initialize_hsmm_forward(
     log_ongoing = Matrix{R}(undef, N, T)
     log_prefix = Vector{R}(undef, T)
 
-    # Observation log-density prefix sums are kept separate for each sequence.
+    # Track impossible observations separately to avoid `-Inf - (-Inf)` in prefix differences.
     cum_log_obs = Matrix{R}(undef, N, T)
+    obs_zeros = Matrix{Int}(undef, N, T)
 
     # Per-sequence scratch space keeps parallel calls independent.
     log_dur = Vector{Matrix{R}}(undef, K)
     log_surv = Vector{Matrix{R}}(undef, K)
     incoming = Vector{Vector{R}}(undef, K)
     for k in 1:K
-        log_dur[k] = Matrix{R}(undef, max_duration, N)
-        log_surv[k] = Matrix{R}(undef, max_duration, N)
+        t1, t2 = seq_limits(seq_ends, k)
+        D = sequence_max_duration(max_duration, t1, t2)
+        log_dur[k] = Matrix{R}(undef, D, N)
+        log_surv[k] = Matrix{R}(undef, D, N)
         incoming[k] = Vector{R}(undef, N)
     end
 
@@ -79,6 +87,7 @@ function initialize_hsmm_forward(
         log_ongoing,
         log_prefix,
         cum_log_obs,
+        obs_zeros,
         log_dur,
         log_surv,
         incoming,
@@ -95,15 +104,22 @@ function fill_duration_buffers!(
 ) where {R}
     durs = duration_distributions(hsmm, control)
     for i in 1:N
-        log_head = convert(R, -Inf)
-        for d in 1:max_duration
-            # Complementing the head keeps survival probabilities independent of max_duration.
-            log_surv[d, i] = log1mexp(min(log_head, zero(R)))
+        # Seed beyond the cutoff, then accumulate backward without subtracting probabilities.
+        s = convert(R, duration_logsurvival(durs[i], max_duration + 1))
+        for d in max_duration:-1:1
             log_dur[d, i] = duration_logdensityof(durs[i], d)
-            log_head = logaddexp(log_head, log_dur[d, i])
+            s = logaddexp(s, log_dur[d, i])
+            log_surv[d, i] = s
         end
     end
     return nothing
+end
+
+# A changed zero count means the segment contains an impossible observation.
+@inline function segment_log_obs(
+    cum_end::R, cum_start::R, zeros_end::Integer, zeros_start::Integer, log_zero::R
+) where {R}
+    return zeros_end == zeros_start ? cum_end - cum_start : log_zero
 end
 
 # Return false if no next state is reachable.
@@ -134,6 +150,7 @@ function extend_segments!(
     log_ends::AbstractMatrix{R},
     log_ongoing::AbstractMatrix{R},
     cum_log_obs::AbstractMatrix{R},
+    obs_zeros::AbstractMatrix{Int},
     incoming::AbstractVector{R},
     log_dur::AbstractMatrix{R},
     log_surv::AbstractMatrix{R},
@@ -148,12 +165,20 @@ function extend_segments!(
         for j in 1:N
             inc = incoming[j]
             if inc > log_zero
-                # The prefix difference covers observations t+1:t_end.
-                base = inc + cum_log_obs[j, t_end] - cum_log_obs[j, t]
-                log_ends[j, t_end] = logaddexp(log_ends[j, t_end], base + log_dur[d, j])
-                log_ongoing[j, t_end] = logaddexp(
-                    log_ongoing[j, t_end], base + log_surv[d, j]
+                log_obs = segment_log_obs(
+                    cum_log_obs[j, t_end],
+                    cum_log_obs[j, t],
+                    obs_zeros[j, t_end],
+                    obs_zeros[j, t],
+                    log_zero,
                 )
+                if log_obs > log_zero
+                    base = inc + log_obs
+                    log_ends[j, t_end] = logaddexp(log_ends[j, t_end], base + log_dur[d, j])
+                    log_ongoing[j, t_end] = logaddexp(
+                        log_ongoing[j, t_end], base + log_surv[d, j]
+                    )
+                end
             end
         end
     end
@@ -202,24 +227,34 @@ function _forward!(
     k::Integer;
     error_if_not_finite::Bool,
 ) where {R}
-    (; α, logL, log_ends, log_ongoing, log_prefix, cum_log_obs, max_duration) = storage
+    (; α, logL, log_ends, log_ongoing, log_prefix, cum_log_obs, obs_zeros) = storage
     log_dur = storage.log_dur[k]
     log_surv = storage.log_surv[k]
     incoming = storage.incoming[k]
     t1, t2 = seq_limits(seq_ends, k)
     N = length(hsmm)
+    max_duration = sequence_max_duration(storage.max_duration, t1, t2)
     log_zero = convert(R, -Inf)
     uniform = uniform_controls(control_seq)
 
-    # Cumulative observation log densities.
+    # Keep impossible observations out of the finite prefix sums.
     for t in t1:t2
         obs_logdensities!(
             view(cum_log_obs, :, t), hsmm, obs_seq[t], control_seq[t]; error_if_not_finite
         )
+        for i in 1:N
+            if cum_log_obs[i, t] == log_zero
+                cum_log_obs[i, t] = zero(R)
+                obs_zeros[i, t] = 1
+            else
+                obs_zeros[i, t] = 0
+            end
+        end
     end
     for t in (t1 + 1):t2
         for i in 1:N
             cum_log_obs[i, t] += cum_log_obs[i, t - 1]
+            obs_zeros[i, t] += obs_zeros[i, t - 1]
         end
     end
 
@@ -229,12 +264,19 @@ function _forward!(
 
     # The control at the start of a segment selects its duration distribution.
     fill_duration_buffers!(log_dur, log_surv, hsmm, control_seq[t1], max_duration, N)
-    for d in 1:min(max_duration, t2 - t1 + 1)
+    for d in 1:max_duration
         t_end = t1 + d - 1
         for i in 1:N
-            base = log_init[i] + cum_log_obs[i, t_end]
-            log_ends[i, t_end] = logaddexp(log_ends[i, t_end], base + log_dur[d, i])
-            log_ongoing[i, t_end] = logaddexp(log_ongoing[i, t_end], base + log_surv[d, i])
+            log_obs = segment_log_obs(
+                cum_log_obs[i, t_end], zero(R), obs_zeros[i, t_end], 0, log_zero
+            )
+            if log_obs > log_zero
+                base = log_init[i] + log_obs
+                log_ends[i, t_end] = logaddexp(log_ends[i, t_end], base + log_dur[d, i])
+                log_ongoing[i, t_end] = logaddexp(
+                    log_ongoing[i, t_end], base + log_surv[d, i]
+                )
+            end
         end
     end
 
@@ -247,6 +289,7 @@ function _forward!(
                 log_ends,
                 log_ongoing,
                 cum_log_obs,
+                obs_zeros,
                 incoming,
                 log_dur,
                 log_surv,
@@ -274,6 +317,7 @@ function _forward!(
                 log_ends,
                 log_ongoing,
                 cum_log_obs,
+                obs_zeros,
                 incoming,
                 log_dur,
                 log_surv,
