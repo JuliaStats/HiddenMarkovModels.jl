@@ -1,7 +1,7 @@
 using HiddenMarkovModels
-using HiddenMarkovModels: duration_logdensityof, rand_duration
+using HiddenMarkovModels: duration_logdensityof, duration_logsurvival, rand_duration
 using DensityInterface: DensityInterface, DensityKind, HasDensity, logdensityof
-using Distributions: Geometric, NegativeBinomial, Poisson
+using Distributions: DiscreteUniform, Geometric, NegativeBinomial, Poisson, logccdf
 using Random: AbstractRNG
 using StableRNGs: StableRNG
 using Statistics: mean
@@ -13,6 +13,14 @@ struct ConstDuration{T} end
 DensityInterface.DensityKind(::ConstDuration) = HasDensity()
 DensityInterface.logdensityof(::ConstDuration, x) = iszero(x) ? 0.0 : -Inf
 Base.rand(::AbstractRNG, ::ConstDuration{T}) where {T} = zero(T)
+
+# Forces dispatch to the generic tail summation.
+struct DuckDuration{D}
+    dist::D
+end
+DensityInterface.DensityKind(::DuckDuration) = HasDensity()
+DensityInterface.logdensityof(d::DuckDuration, x) = logdensityof(d.dist, x)
+Base.rand(rng::AbstractRNG, d::DuckDuration) = rand(rng, d.dist)
 
 @testset "Duration convention" begin
     @testset "Shift relationship" begin
@@ -65,5 +73,52 @@ Base.rand(::AbstractRNG, ::ConstDuration{T}) where {T} = zero(T)
         @test duration_logdensityof(d, 0) == -Inf
         @test rand_duration(StableRNG(1), d) == 1
         @test rand_duration(d) == 1  # default rng overload
+    end
+end
+
+@testset "Duration survival" begin
+    dists = (Poisson(3.0), Geometric(0.5), Geometric(0.05), NegativeBinomial(3.0, 0.4))
+
+    @testset "Agrees with the closed form far into the tail" begin
+        for dist in dists, k in 1:80
+            exact = k <= 1 ? 0.0 : logccdf(dist, k - 2)
+            @test duration_logsurvival(dist, k) ≈ exact atol = 1e-10
+        end
+    end
+
+    @testset "Every sojourn lasts at least one timestep" begin
+        for dist in (dists..., Geometric(1.0), DiscreteUniform(0, 5))
+            @test duration_logsurvival(dist, 1) == 0
+            @test duration_logsurvival(dist, 0) == 0
+        end
+    end
+
+    @testset "Bounded support runs out" begin
+        d = DiscreteUniform(0, 5)
+        @test duration_logsurvival(d, 6) ≈ log(1 / 6)
+        @test duration_logsurvival(d, 7) == -Inf
+        @test duration_logsurvival(d, 50) == -Inf
+    end
+
+    @testset "Degenerate law" begin
+        @test duration_logsurvival(Geometric(1.0), 1) == 0
+        @test duration_logsurvival(Geometric(1.0), 2) == -Inf
+    end
+
+    @testset "Consistent with the duration density" begin
+        for dist in dists, k in 1:15
+            s1, s2 = duration_logsurvival(dist, k), duration_logsurvival(dist, k + 1)
+            @test exp(s1) - exp(s2) ≈ exp(duration_logdensityof(dist, k)) atol = 1e-12
+        end
+    end
+
+    @testset "Generic fallback matches the closed-form method" begin
+        @test duration_logsurvival(ConstDuration{Int}(), 1) == 0
+        @test duration_logsurvival(ConstDuration{Int}(), 2) == -Inf
+
+        for dist in dists, k in 1:40
+            @test duration_logsurvival(DuckDuration(dist), k) ≈
+                duration_logsurvival(dist, k) atol = 1e-10
+        end
     end
 end

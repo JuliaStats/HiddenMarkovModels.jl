@@ -42,6 +42,11 @@ should implement
 
 - `Random.rand(rng, dist)` for sampling
 - `DensityInterface.logdensityof(dist, k)` for inference
+
+Optionally, it may also implement
+
+- [`duration_logsurvival`](@ref)`(dist, k)` for right-censoring. The generic fallback sums the
+  tail of `dist`, but a closed form is faster and avoids truncation.
 """
 function duration_distributions end
 

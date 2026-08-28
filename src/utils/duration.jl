@@ -1,3 +1,7 @@
+# Stop once the tail converges numerically, with a hard limit for pathological distributions.
+const MAX_QUIET_TERMS = 64
+const MAX_TAIL_TERMS = 100_000
+
 """
 $(SIGNATURES)
 
@@ -32,16 +36,25 @@ rand_duration(dist) = rand_duration(default_rng(), dist)
 """
 $(SIGNATURES)
 
-Return log P(sojourn time >= k) for the duration distribution dist.
+Return `log ℙ(sojourn time >= k)` for the duration distribution `dist`.
 
-This is the right-censoring term for a sequence's final segment. It is computed from
-P(sojourn time <= k - 1) using duration_logdensityof, avoiding explicit summation
-over a potentially unbounded tail.
+This is the right-censoring term for the final segment of a sequence. The generic method sums the
+tail until it converges numerically; duration types may provide a closed form instead.
 """
 function duration_logsurvival(dist, k::Integer)
-    log_head = oftype(duration_logdensityof(dist, one(k)), -Inf)
-    for d in one(k):(k - one(k))
-        log_head = logaddexp(log_head, duration_logdensityof(dist, d))
+    # Every sojourn lasts at least one timestep.
+    k <= one(k) && return zero(duration_logdensityof(dist, one(k)))
+    log_tail = oftype(duration_logdensityof(dist, one(k)), -Inf)
+    quiet = 0
+    for d in k:(k + MAX_TAIL_TERMS)
+        new_tail = logaddexp(log_tail, duration_logdensityof(dist, d))
+        if new_tail == log_tail
+            quiet += 1
+            quiet >= MAX_QUIET_TERMS && break
+        else
+            quiet = 0
+        end
+        log_tail = new_tail
     end
-    return log1mexp(min(log_head, zero(log_head)))
+    return log_tail
 end
