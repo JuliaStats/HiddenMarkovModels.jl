@@ -10,7 +10,7 @@ of `(sojourn time - 1)`. The sojourn time itself lives on `{1, 2, 3, ...}`, so t
 `-Inf` through `dist` (e.g. a `Distributions.Distribution` returns `-Inf` for a negative
 argument).
 
-See also [`rand_duration`](@ref).
+See also [`rand_duration`](@ref) and [`duration_logsurvival`](@ref).
 """
 duration_logdensityof(dist, k::Integer) = logdensityof(dist, k - one(k))
 
@@ -28,3 +28,26 @@ function rand_duration(rng::AbstractRNG, dist)
 end
 
 rand_duration(dist) = rand_duration(default_rng(), dist)
+
+"""
+    duration_logsurvival(dist, k)
+
+Return `log ℙ(sojourn time >= k)` for the duration distribution `dist`, following the
+convention of [`duration_logdensityof`](@ref) (the sojourn time lives on `{1, 2, 3, ...}`).
+
+This is the right-censoring term for the final segment of a sequence, whose sojourn is only
+known to last at least `k` timesteps. Since every sojourn lasts at least one timestep, the
+result must be `0` for `k <= 1`.
+
+A closed-form method based on `logccdf` is provided for every
+`Distributions.DiscreteUnivariateDistribution` when Distributions.jl is loaded. Custom duration
+distributions must implement this function themselves, for instance as
+
+```julia
+function HiddenMarkovModels.duration_logsurvival(dist::MyDuration, k::Integer)
+    k <= 1 && return 0.0
+    return log1p(-sum(exp(duration_logdensityof(dist, j)) for j in 1:(k - 1)))
+end
+```
+"""
+function duration_logsurvival end
