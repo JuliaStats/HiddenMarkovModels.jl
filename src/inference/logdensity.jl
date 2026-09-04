@@ -52,11 +52,11 @@ $(SIGNATURES)
 Compute the joint loglikelihood of `obs_seq` and `state_seq` for `hsmm`.
 
 Each constant-state segment contributes its sojourn length to its duration distribution. The
-control at the segment's first timestep determines both its duration distribution and the
-transition into it.
+control at the segment's first timestep determines its duration distribution, and the control at
+the first timestep of the next segment determines the transition into it.
 
-The final segment is right-censored and therefore contributes duration_logsurvival
-rather than duration_logdensityof.
+The final segment is right-censored and therefore contributes [`duration_logsurvival`](@ref)
+rather than [`duration_logdensityof`](@ref).
 """
 function joint_logdensityof(
     hsmm::AbstractHSMM,
@@ -70,20 +70,15 @@ function joint_logdensityof(
     for k in eachindex(seq_ends)
         t1, t2 = seq_limits(seq_ends, k)
         # Initialization
-        init = initialization(hsmm)
-        logL += log(init[state_seq[t1]])
+        loginit = log_initialization(hsmm)
+        logL += loginit[state_seq[t1]]
         # Observations
         for t in t1:t2
             dists = obs_distributions(hsmm, control_seq[t])
             logL += logdensityof(dists[state_seq[t]], obs_seq[t])
         end
         # Durations and transitions, segment by segment
-        t_start = t1
-        while t_start <= t2
-            t_end = t_start
-            while t_end < t2 && state_seq[t_end + 1] == state_seq[t_start]
-                t_end += 1
-            end
+        for (t_start, t_end) in StateSegments(state_seq, t1, t2)
             i = state_seq[t_start]
             d = t_end - t_start + 1
             durations = duration_distributions(hsmm, control_seq[t_start])
@@ -92,10 +87,9 @@ function joint_logdensityof(
                 logL += duration_logsurvival(durations[i], d)
             else
                 logL += duration_logdensityof(durations[i], d)
-                trans = transition_matrix(hsmm, control_seq[t_end + 1])
-                logL += log(trans[i, state_seq[t_end + 1]])
+                logtrans = log_transition_matrix(hsmm, control_seq[t_end + 1])
+                logL += logtrans[i, state_seq[t_end + 1]]
             end
-            t_start = t_end + 1
         end
     end
     return logL

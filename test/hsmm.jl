@@ -8,6 +8,7 @@ using HiddenMarkovModels:
     duration_logsurvival,
     duration_logdensity_type,
     elementwise_log,
+    StateSegments,
     log_initialization,
     log_transition_matrix,
     valid_hsmm
@@ -143,6 +144,22 @@ end
         @test length(out.state_seq) == 50
         @test length(out.obs_seq) == 50
     end
+end
+
+# Summing over the iterator inside a function so `@allocated` measures only the iteration.
+function total_span(state_seq, t1, t2)
+    return sum(t_end - t_start + 1 for (t_start, t_end) in StateSegments(state_seq, t1, t2))
+end
+
+@testset "State segments" begin
+    @test collect(StateSegments([1, 1, 2, 2, 2, 1], 1, 6)) == [(1, 2), (3, 5), (6, 6)]
+    @test collect(StateSegments([1, 1, 2, 2, 2, 1], 2, 4)) == [(2, 2), (3, 4)]
+    @test collect(StateSegments([3], 1, 1)) == [(1, 1)]
+    @test isempty(collect(StateSegments([1, 2], 2, 1)))
+    @test eltype(StateSegments([1, 2], 1, 2)) == Tuple{Int,Int}
+    state_seq = [1, 1, 2, 2, 2, 1]
+    @test total_span(state_seq, 1, 6) == 6
+    @test iszero(@allocated total_span(state_seq, 1, 6))
 end
 
 @testset "HSMM joint_logdensityof" begin

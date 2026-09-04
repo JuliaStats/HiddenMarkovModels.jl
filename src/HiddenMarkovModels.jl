@@ -21,7 +21,7 @@ using ProgressLogging: @withprogress, @logprogress
 using Random: Random, AbstractRNG, default_rng
 using SparseArrays: AbstractSparseArray, SparseMatrixCSC, nonzeros, nnz, nzrange, rowvals
 using StatsAPI: StatsAPI, fit, fit!
-using StatsFuns: log2π, log1mexp, logaddexp
+using StatsFuns: log2π
 
 export AbstractHSMM, HSMM, AbstractHMM, HMM, ControlledEmissionHMM
 export ControlledEmission, ControlBoundEmission, ControlBoundEmissionVector
@@ -41,6 +41,7 @@ include("utils/fit.jl")
 include("utils/lightdiagnormal.jl")
 include("utils/lightcategorical.jl")
 include("utils/limits.jl")
+include("utils/segments.jl")
 include("utils/duration.jl")
 
 include("inference/predict.jl")

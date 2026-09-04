@@ -13,14 +13,25 @@ struct ConstDuration{T} end
 DensityInterface.DensityKind(::ConstDuration) = HasDensity()
 DensityInterface.logdensityof(::ConstDuration, x) = iszero(x) ? 0.0 : -Inf
 Base.rand(::AbstractRNG, ::ConstDuration{T}) where {T} = zero(T)
+HiddenMarkovModels.duration_logsurvival(::ConstDuration, k::Integer) = k <= 1 ? 0.0 : -Inf
 
-# Forces dispatch to the generic tail summation.
+# Wraps a `Distributions` law without being one, so it must supply its own survival function.
+# It uses the two-line summation suggested in the `duration_logsurvival` docstring.
 struct DuckDuration{D}
     dist::D
 end
 DensityInterface.DensityKind(::DuckDuration) = HasDensity()
 DensityInterface.logdensityof(d::DuckDuration, x) = logdensityof(d.dist, x)
 Base.rand(rng::AbstractRNG, d::DuckDuration) = rand(rng, d.dist)
+function HiddenMarkovModels.duration_logsurvival(d::DuckDuration, k::Integer)
+    k <= 1 && return 0.0
+    return log1p(-sum(exp(duration_logdensityof(d, j)) for j in 1:(k - 1)))
+end
+
+# Implements the density but forgets the survival function.
+struct ForgetfulDuration end
+DensityInterface.DensityKind(::ForgetfulDuration) = HasDensity()
+DensityInterface.logdensityof(::ForgetfulDuration, x) = iszero(x) ? 0.0 : -Inf
 
 @testset "Duration convention" begin
     @testset "Shift relationship" begin
@@ -112,13 +123,19 @@ end
         end
     end
 
-    @testset "Generic fallback matches the closed-form method" begin
+    @testset "Custom user distribution (interface only)" begin
         @test duration_logsurvival(ConstDuration{Int}(), 1) == 0
         @test duration_logsurvival(ConstDuration{Int}(), 2) == -Inf
 
-        for dist in dists, k in 1:40
+        # The documented summation recipe agrees with the closed form.
+        # `log1p(-head)` loses precision as `head -> 1`, hence the relative tolerance.
+        for dist in dists, k in 1:20
             @test duration_logsurvival(DuckDuration(dist), k) ≈
-                duration_logsurvival(dist, k) atol = 1e-10
+                duration_logsurvival(dist, k) atol = 1e-8 rtol = 1e-6
         end
+    end
+
+    @testset "No silent fallback" begin
+        @test_throws MethodError duration_logsurvival(ForgetfulDuration(), 2)
     end
 end
