@@ -3,16 +3,19 @@ using HiddenMarkovModels
 using HiddenMarkovModels:
     AbstractLatentStateModel,
     AbstractHSMM,
+    HSMMForwardStorage,
     duration_distributions,
     duration_logdensityof,
     duration_logsurvival,
     duration_logdensity_type,
     elementwise_log,
     StateSegments,
+    forward!,
+    initialize_hsmm_forward,
     log_initialization,
     log_transition_matrix,
     valid_hsmm
-using Distributions: Geometric, Normal
+using Distributions: Categorical, Geometric, Normal
 using Random: AbstractRNG
 using StableRNGs: StableRNG
 using Test
@@ -244,5 +247,360 @@ end
         )
         # Float32 model with Float64 duration distributions promotes to Float64.
         @test joint_logdensityof(hsmm32, [0.0f0, 5.0f0], [1, 2]) isa Float64
+    end
+end
+
+# A duck-typed equivalent of `Geometric(p)`.
+struct DuckGeometric
+    p::Float64
+end
+DensityInterface.DensityKind(::DuckGeometric) = HasDensity()
+function DensityInterface.logdensityof(d::DuckGeometric, k)
+    return k < 0 ? -Inf : log(d.p) + k * log1p(-d.p)
+end
+Base.rand(::AbstractRNG, ::DuckGeometric) = 0
+function HiddenMarkovModels.duration_logsurvival(d::DuckGeometric, k::Integer)
+    return k <= 1 ? 0.0 : (k - 1) * log1p(-d.p)
+end
+
+# The control at the start of a segment selects its duration distribution.
+struct ControlledDurationHSMM <: AbstractHSMM
+    init::Vector{Float64}
+    trans::Matrix{Float64}
+    dists::Vector{Normal{Float64}}
+    durs::Vector{Vector{Geometric{Float64}}}
+end
+
+HiddenMarkovModels.initialization(hsmm::ControlledDurationHSMM) = hsmm.init
+HiddenMarkovModels.transition_matrix(hsmm::ControlledDurationHSMM) = hsmm.trans
+HiddenMarkovModels.transition_matrix(hsmm::ControlledDurationHSMM, ::Integer) = hsmm.trans
+HiddenMarkovModels.obs_distributions(hsmm::ControlledDurationHSMM) = hsmm.dists
+HiddenMarkovModels.obs_distributions(hsmm::ControlledDurationHSMM, ::Integer) = hsmm.dists
+HiddenMarkovModels.duration_distributions(hsmm::ControlledDurationHSMM) = hsmm.durs[1]
+function HiddenMarkovModels.duration_distributions(
+    hsmm::ControlledDurationHSMM, control::Integer
+)
+    return hsmm.durs[control]
+end
+
+all_state_seqs(N, T) = (collect(s) for s in Iterators.product(ntuple(_ -> 1:N, T)...))
+
+# An independent oracle for `forward`.
+function brute_force_logdensityof(hsmm, obs_seq, control_seq, N)
+    T = length(obs_seq)
+    return log(
+        sum(
+            exp(joint_logdensityof(hsmm, obs_seq, s, control_seq)) for
+            s in all_state_seqs(N, T)
+        ),
+    )
+end
+
+# An independent oracle for the filtered state marginals returned by `forward`.
+function brute_force_marginals(hsmm, obs_seq, control_seq, N)
+    T = length(obs_seq)
+    α = zeros(N, T)
+    for t in 1:T
+        for s in all_state_seqs(N, t)
+            α[s[t], t] += exp(joint_logdensityof(hsmm, obs_seq[1:t], s, control_seq[1:t]))
+        end
+        α[:, t] ./= sum(α[:, t])
+    end
+    return α
+end
+
+# Ensure `@allocated` sees concretely typed arguments.
+function call_forward!(storage, hsmm, obs_seq, control_seq, seq_ends)
+    return forward!(storage, hsmm, obs_seq, control_seq; seq_ends)
+end
+
+function rand_hsmm(rng, N)
+    init = rand(rng, N)
+    init ./= sum(init)
+    trans = [i == j ? 0.0 : rand(rng) for i in 1:N, j in 1:N]
+    for i in 1:N
+        trans[i, :] ./= sum(trans[i, :])
+    end
+    dists = [Normal(2.0 * i, 1.0) for i in 1:N]
+    dur_dists = [Geometric(0.2 + 0.15 * i) for i in 1:N]
+    return HSMM(init, trans, dists, dur_dists)
+end
+
+@testset "HSMM forward" begin
+    @testset "Brute-force marginalization over all state sequences" begin
+        rng = StableRNG(101)
+        for N in 2:3, T in 5:7
+            hsmm = rand_hsmm(rng, N)
+            obs_seq = randn(rng, T)
+            control_seq = fill(nothing, T)
+            @test logdensityof(hsmm, obs_seq; max_duration=T) ≈
+                brute_force_logdensityof(hsmm, obs_seq, control_seq, N)
+        end
+    end
+
+    @testset "Normalization over all observation sequences" begin
+        # This relies on right-censoring the final segment.
+        init = [0.6, 0.4]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Categorical([0.7, 0.3]), Categorical([0.2, 0.8])]
+        dur_dists = [Geometric(0.4), Geometric(0.55)]
+        hsmm = HSMM(init, trans, dists, dur_dists)
+        T = 4
+        total = sum(
+            exp(logdensityof(hsmm, collect(obs))) for
+            obs in Iterators.product(ntuple(_ -> 1:2, T)...)
+        )
+        @test total ≈ 1.0
+
+        init3 = [0.5, 0.3, 0.2]
+        trans3 = [0.0 0.5 0.5; 0.4 0.0 0.6; 0.7 0.3 0.0]
+        dists3 = [Categorical([0.7, 0.3]), Categorical([0.2, 0.8]), Categorical([0.5, 0.5])]
+        dur3 = [Geometric(0.3), Geometric(0.5), Geometric(0.9)]
+        hsmm3 = HSMM(init3, trans3, dists3, dur3)
+        total3 = sum(
+            exp(logdensityof(hsmm3, collect(obs))) for
+            obs in Iterators.product(ntuple(_ -> 1:2, T)...)
+        )
+        @test total3 ≈ 1.0
+    end
+
+    @testset "Exact equivalence with an HMM under geometric sojourns" begin
+        hmm_init = [0.5, 0.3, 0.2]
+        hmm_trans = [0.7 0.2 0.1; 0.3 0.5 0.2; 0.25 0.25 0.5]
+        hmm_dists = [Normal(0.0), Normal(5.0), Normal(10.0)]
+        hmm = HMM(hmm_init, hmm_trans, hmm_dists)
+
+        N = length(hmm_init)
+        hsmm_trans = [
+            i == j ? 0.0 : hmm_trans[i, j] / (1 - hmm_trans[i, i]) for i in 1:N, j in 1:N
+        ]
+        hsmm_durs = [Geometric(1 - hmm_trans[i, i]) for i in 1:N]
+        hsmm = HSMM(hmm_init, hsmm_trans, hmm_dists, hsmm_durs)
+
+        rng = StableRNG(64)
+        T = 12
+        for _ in 1:10
+            (; obs_seq) = rand(rng, hmm, T)
+            @test logdensityof(hsmm, obs_seq; max_duration=T) ≈ logdensityof(hmm, obs_seq)
+        end
+
+        # Regression test for precision loss when survival is computed from the head complement.
+        long_trans = [0.8 0.12 0.08; 0.1 0.85 0.05; 0.15 0.1 0.75]
+        long_hmm = HMM(
+            [0.4, 0.35, 0.25], long_trans, [Normal(2.0), Normal(4.0), Normal(6.0)]
+        )
+        long_hsmm = HSMM(
+            [0.4, 0.35, 0.25],
+            [
+                i == j ? 0.0 : long_trans[i, j] / (1 - long_trans[i, i]) for i in 1:N,
+                j in 1:N
+            ],
+            [Normal(2.0), Normal(4.0), Normal(6.0)],
+            [Geometric(1 - long_trans[i, i]) for i in 1:N],
+        )
+        long_obs = randn(StableRNG(65), 500)
+        @test logdensityof(long_hsmm, long_obs) ≈ logdensityof(long_hmm, long_obs)
+    end
+
+    @testset "Multiple sequences of differing lengths" begin
+        # Regression test for a race in the observation prefix sums.
+        rng = StableRNG(15)
+        hsmm = rand_hsmm(rng, 3)
+        lengths = (4, 11, 7, 9, 5, 13)
+        obs_seqs = [randn(rng, T) for T in lengths]
+        obs_seq = reduce(vcat, obs_seqs)
+        seq_ends = cumsum(collect(lengths))
+        joint = logdensityof(hsmm, obs_seq; seq_ends)
+        separate = sum(
+            logdensityof(hsmm, o; max_duration=maximum(lengths)) for o in obs_seqs
+        )
+        @test joint ≈ separate
+        # Repeat to expose thread scheduling nondeterminism.
+        for _ in 1:20
+            @test logdensityof(hsmm, obs_seq; seq_ends) == joint
+        end
+    end
+
+    @testset "Controlled duration distributions" begin
+        init = [0.6, 0.4]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Normal(0.0, 1.0), Normal(4.0, 1.0)]
+        durs = [[Geometric(0.15), Geometric(0.25)], [Geometric(0.85), Geometric(0.75)]]
+        hsmm = ControlledDurationHSMM(init, trans, dists, durs)
+        @test duration_distributions(hsmm, 1) != duration_distributions(hsmm, 2)
+
+        rng = StableRNG(202)
+        T = 6
+        obs_seq = randn(rng, T)
+        for control_seq in ([1, 2, 1, 2, 1, 2], [1, 1, 2, 2, 1, 1], [2, 2, 2, 1, 1, 1])
+            @test logdensityof(hsmm, obs_seq, control_seq; max_duration=T) ≈
+                brute_force_logdensityof(hsmm, obs_seq, control_seq, 2)
+        end
+        @test logdensityof(hsmm, obs_seq, [1, 1, 2, 2, 1, 1]) !=
+            logdensityof(hsmm, obs_seq, [2, 2, 1, 1, 2, 2])
+    end
+
+    @testset "Duck-typed duration distributions" begin
+        init = [0.6, 0.4]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Normal(0.0, 1.0), Normal(5.0, 1.0)]
+        hsmm_ref = HSMM(init, trans, dists, [Geometric(0.4), Geometric(0.6)])
+        hsmm_duck = HSMM(init, trans, dists, [DuckGeometric(0.4), DuckGeometric(0.6)])
+        obs_seq = randn(StableRNG(9), 8)
+        @test logdensityof(hsmm_duck, obs_seq) ≈ logdensityof(hsmm_ref, obs_seq)
+    end
+
+    @testset "Type promotion" begin
+        hsmm32 = HSMM(
+            Float32[0.6, 0.4],
+            Float32[0.0 1.0; 1.0 0.0],
+            [Normal(0.0f0, 1.0f0), Normal(5.0f0, 1.0f0)],
+            [Geometric(0.4), Geometric(0.6)],
+        )
+        obs_seq = Float32[0.0, 5.0, 0.1, 4.9]
+        control_seq = fill(nothing, length(obs_seq))
+        storage = initialize_hsmm_forward(
+            hsmm32, obs_seq, control_seq; seq_ends=(length(obs_seq),)
+        )
+        @test storage isa HSMMForwardStorage{Float64}
+        @test logdensityof(hsmm32, obs_seq) isa Float64
+
+        hsmm_all32 = HSMM(
+            Float32[0.6, 0.4],
+            Float32[0.0 1.0; 1.0 0.0],
+            [Normal(0.0f0, 1.0f0), Normal(5.0f0, 1.0f0)],
+            [Geometric(0.4f0), Geometric(0.6f0)],
+        )
+        storage32 = initialize_hsmm_forward(
+            hsmm_all32, obs_seq, control_seq; seq_ends=(length(obs_seq),)
+        )
+        @test storage32 isa HSMMForwardStorage{Float32}
+    end
+
+    @testset "error_if_not_finite" begin
+        init = [0.6, 0.4]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Categorical([0.7, 0.3]), Categorical([0.2, 0.8])]
+        hsmm = HSMM(init, trans, dists, [Geometric(0.4), Geometric(0.6)])
+        obs_seq = [1, 2, 3]  # 3 is outside the support of every observation distribution
+        @test logdensityof(hsmm, obs_seq) == -Inf
+        @test_throws ArgumentError forward(hsmm, obs_seq)
+        @test_throws ArgumentError forward(hsmm, obs_seq; error_if_not_finite=true)
+        _, logL = forward(hsmm, obs_seq; error_if_not_finite=false)
+        @test only(logL) == -Inf
+    end
+
+    @testset "Zero-probability observation before the last timestep" begin
+        # An impossible observation must not poison later prefix differences.
+        init = [0.5, 0.5]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Categorical([0.0, 1.0]), Categorical([0.5, 0.5])]
+        hsmm = HSMM(init, trans, dists, [Geometric(0.4), Geometric(0.6)])
+        for obs_seq in ([1, 2, 2], [2, 1, 2, 2], [2, 2, 1, 2, 2, 2])
+            control_seq = fill(nothing, length(obs_seq))
+            expected = brute_force_logdensityof(hsmm, obs_seq, control_seq, 2)
+            @test isfinite(expected)
+            @test logdensityof(hsmm, obs_seq) ≈ expected
+        end
+        @test logdensityof(hsmm, [1, 2, 2]) ≈ -1.83258146374831
+
+        # The impossible emission only affects segments that contain it.
+        α, _ = forward(hsmm, [1, 2, 2])
+        @test α[:, 1] ≈ [0.0, 1.0]
+        @test α[:, 2] ≈ [0.75, 0.25]
+        @test α ≈ brute_force_marginals(hsmm, [1, 2, 2], fill(nothing, 3), 2)
+    end
+
+    @testset "max_duration" begin
+        init = [0.5, 0.5]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Normal(0.0), Normal(4.0)]
+        # Long sojourns make truncation visible.
+        hsmm = HSMM(init, trans, dists, [Geometric(0.08), Geometric(0.12)])
+        T = 12
+        obs_seq = rand(StableRNG(2), hsmm, T).obs_seq
+
+        exact = logdensityof(hsmm, obs_seq)
+        @test exact == logdensityof(hsmm, obs_seq; max_duration=T)
+        for extra in 1:5
+            @test logdensityof(hsmm, obs_seq; max_duration=T + extra) == exact
+        end
+        errors = [abs(logdensityof(hsmm, obs_seq; max_duration=d) - exact) for d in 1:T]
+        @test issorted(errors; rev=true)
+        for d in 1:T
+            @test logdensityof(hsmm, obs_seq; max_duration=d) <= exact
+        end
+        @test errors[1] > 1e-3
+        @test errors[T] == 0
+        @test_throws ArgumentError logdensityof(hsmm, obs_seq; max_duration=0)
+    end
+
+    @testset "Filtered state marginals" begin
+        rng = StableRNG(101)
+        hsmm = rand_hsmm(rng, 3)
+        T = 25
+        obs_seq = rand(rng, hsmm, T).obs_seq
+        α, logL = forward(hsmm, obs_seq)
+
+        @test size(α) == (3, T)
+        @test all(>=(0), α)
+        for t in 1:T
+            @test sum(α[:, t]) ≈ 1
+        end
+        @test logL[1] ≈ logdensityof(hsmm, obs_seq)
+
+        # Check every prefix against brute-force marginalization.
+        rng = StableRNG(303)
+        for N in 2:3, T in 5:7
+            hsmm = rand_hsmm(rng, N)
+            obs_seq = randn(rng, T)
+            control_seq = fill(nothing, T)
+            storage = initialize_hsmm_forward(
+                hsmm, obs_seq, control_seq; seq_ends=(T,), max_duration=T
+            )
+            forward!(storage, hsmm, obs_seq, control_seq; seq_ends=(T,))
+            expected = brute_force_marginals(hsmm, obs_seq, control_seq, N)
+            for t in 1:T
+                @test storage.log_prefix[t] ≈
+                    brute_force_logdensityof(hsmm, obs_seq[1:t], control_seq[1:t], N)
+                @test storage.α[:, t] ≈ expected[:, t]
+            end
+        end
+    end
+
+    @testset "Filtered marginals match the equivalent HMM exactly" begin
+        hmm_init = [0.5, 0.3, 0.2]
+        hmm_trans = [0.7 0.2 0.1; 0.3 0.5 0.2; 0.25 0.25 0.5]
+        hmm_dists = [Normal(0.0), Normal(5.0), Normal(10.0)]
+        hmm = HMM(hmm_init, hmm_trans, hmm_dists)
+
+        N = length(hmm_init)
+        hsmm_trans = [
+            i == j ? 0.0 : hmm_trans[i, j] / (1 - hmm_trans[i, i]) for i in 1:N, j in 1:N
+        ]
+        hsmm_durs = [Geometric(1 - hmm_trans[i, i]) for i in 1:N]
+        hsmm = HSMM(hmm_init, hsmm_trans, hmm_dists, hsmm_durs)
+
+        rng = StableRNG(102)
+        for _ in 1:10
+            obs_seq = rand(rng, hmm, 15).obs_seq
+            α_hmm, logL_hmm = forward(hmm, obs_seq)
+            α_hsmm, logL_hsmm = forward(hsmm, obs_seq; max_duration=15)
+            @test α_hsmm ≈ α_hmm
+            @test logL_hsmm ≈ logL_hmm
+        end
+    end
+
+    @testset "Allocations" begin
+        rng = StableRNG(77)
+        hsmm = rand_hsmm(rng, 3)
+        T = 30
+        obs_seq = rand(rng, hsmm, T).obs_seq
+        control_seq = fill(nothing, T)
+        # An `NTuple{1}` for `seq_ends` disables multithreading, as in the HMM allocation test.
+        seq_ends = (T,)
+        storage = initialize_hsmm_forward(hsmm, obs_seq, control_seq; seq_ends)
+        call_forward!(storage, hsmm, obs_seq, control_seq, seq_ends)  # warm up
+        @test (@allocated call_forward!(storage, hsmm, obs_seq, control_seq, seq_ends)) == 0
     end
 end

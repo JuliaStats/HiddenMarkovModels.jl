@@ -73,6 +73,13 @@ HiddenMarkovModels.initialize_forward
 HiddenMarkovModels.forward!
 ```
 
+### Forward (HSMM)
+
+```@docs
+HiddenMarkovModels.HSMMForwardStorage
+HiddenMarkovModels.initialize_hsmm_forward
+```
+
 ### Viterbi
 
 ```@docs
