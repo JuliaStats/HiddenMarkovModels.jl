@@ -119,6 +119,7 @@ HiddenMarkovModels.ControlBoundEmissionVector
 HiddenMarkovModels.duration_logdensityof
 HiddenMarkovModels.rand_duration
 HiddenMarkovModels.duration_logsurvival
+HiddenMarkovModels.StateSegments
 HiddenMarkovModels.AbstractLatentStateModel
 HiddenMarkovModels.AbstractHSMM
 HiddenMarkovModels.HSMM
