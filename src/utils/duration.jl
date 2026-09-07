@@ -37,7 +37,7 @@ convention of [`duration_logdensityof`](@ref) (the sojourn time lives on `{1, 2,
 
 This is the right-censoring term for the final segment of a sequence, whose sojourn is only
 known to last at least `k` timesteps. Since every sojourn lasts at least one timestep, the
-result must be `0` for `k <= 1`.
+result must be `0 = log(1)` for `k <= 1`.
 
 A closed-form method based on `logccdf` is provided for every
 `Distributions.DiscreteUnivariateDistribution` when Distributions.jl is loaded. Custom duration
@@ -49,5 +49,7 @@ function HiddenMarkovModels.duration_logsurvival(dist::MyDuration, k::Integer)
     return log1p(-sum(exp(duration_logdensityof(dist, j)) for j in 1:(k - 1)))
 end
 ```
+
+(but taking more precautions with numerical instabilities).
 """
 function duration_logsurvival end

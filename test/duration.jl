@@ -92,7 +92,7 @@ end
 
     @testset "Agrees with the closed form far into the tail" begin
         for dist in dists, k in 1:80
-            exact = k <= 1 ? 0.0 : logccdf(dist, k - 2)
+            exact = logccdf(dist, k - 2)
             @test duration_logsurvival(dist, k) ≈ exact atol = 1e-10
         end
     end
