@@ -42,6 +42,9 @@ should implement
 
 - `Random.rand(rng, dist)` for sampling
 - `DensityInterface.logdensityof(dist, k)` for inference
+- [`duration_logsurvival`](@ref)`(dist, k)` for right-censoring the final segment of a sequence
+
+The last method is already provided for every `Distributions.DiscreteUnivariateDistribution`.
 """
 function duration_distributions end
 

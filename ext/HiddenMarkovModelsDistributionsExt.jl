@@ -7,6 +7,8 @@ using Distributions:
     UnivariateDistribution,
     MultivariateDistribution,
     MatrixDistribution,
+    DiscreteUnivariateDistribution,
+    logccdf,
     fit
 
 function HiddenMarkovModels.fit_in_sequence!(
@@ -42,5 +44,14 @@ end
 
 dcat(M1, M2) = cat(M1, M2; dims=3)
 =#
+
+# Duration distributions model `sojourn - 1`, so `P(sojourn >= k) = P(dist > k - 2)`.
+function HiddenMarkovModels.duration_logsurvival(
+    dist::DiscreteUnivariateDistribution, k::Integer
+)
+    # `logccdf` can return `NaN` at the lower boundary.
+    k <= one(k) && return zero(logccdf(dist, k))
+    return logccdf(dist, k - 2)
+end
 
 end
