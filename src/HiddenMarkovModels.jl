@@ -15,13 +15,13 @@ using Base.Threads: @threads
 using ChainRulesCore: ChainRulesCore, NoTangent, RuleConfig, rrule_via_ad
 using DensityInterface: DensityInterface, DensityKind, HasDensity, NoDensity, logdensityof
 using DocStringExtensions
-using FillArrays: Fill
+using FillArrays: AbstractFill, Fill
 using LinearAlgebra: Transpose, axpy!, Diagonal, dot, ldiv!, lmul!, mul!, parent
 using ProgressLogging: @withprogress, @logprogress
 using Random: Random, AbstractRNG, default_rng
 using SparseArrays: AbstractSparseArray, SparseMatrixCSC, nonzeros, nnz, nzrange, rowvals
 using StatsAPI: StatsAPI, fit, fit!
-using StatsFuns: log2π
+using StatsFuns: log2π, logaddexp
 
 export AbstractHSMM, HSMM, AbstractHMM, HMM, ControlledEmissionHMM
 export ControlledEmission, ControlBoundEmission, ControlBoundEmissionVector
@@ -46,6 +46,7 @@ include("utils/duration.jl")
 
 include("inference/predict.jl")
 include("inference/forward.jl")
+include("inference/forward_hsmm.jl")
 include("inference/viterbi.jl")
 include("inference/forward_backward.jl")
 include("inference/baum_welch.jl")
