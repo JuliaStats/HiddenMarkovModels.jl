@@ -77,7 +77,6 @@ HiddenMarkovModels.forward!
 
 ```@docs
 HiddenMarkovModels.HSMMForwardStorage
-HiddenMarkovModels.initialize_hsmm_forward
 ```
 
 ### Viterbi

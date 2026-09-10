@@ -8,7 +8,7 @@ Only the fields with a description are part of the public API.
 $(TYPEDFIELDS)
 """
 struct HSMMForwardStorage{R}
-    "posterior last state marginals `α[i] = ℙ(X[T]=i | Y[1:T])`"
+    "filtered state marginals `α[i,t] = ℙ(X[t]=i | Y[1:t])`, segment at `t` right-censored"
     α::Matrix{R}
     "one loglikelihood per observation sequence"
     logL::Vector{R}
@@ -44,7 +44,7 @@ end
 """
 $(SIGNATURES)
 """
-function initialize_hsmm_forward(
+function initialize_forward(
     hsmm::AbstractHSMM,
     obs_seq::AbstractVector,
     control_seq::AbstractVector;
@@ -146,7 +146,7 @@ function accumulate_incoming!(
     return reachable
 end
 
-function extend_segments!(
+function extend_segments!(;
     log_ends::AbstractMatrix{R},
     log_ongoing::AbstractMatrix{R},
     cum_log_obs::AbstractMatrix{R},
@@ -285,7 +285,7 @@ function _forward!(
         log_trans = log_transition_matrix(hsmm, control_seq[t1])
         for t in t1:(t2 - 1)
             accumulate_incoming!(incoming, log_ends, log_trans, t, N, log_zero) || continue
-            extend_segments!(
+            extend_segments!(;
                 log_ends,
                 log_ongoing,
                 cum_log_obs,
@@ -313,7 +313,7 @@ function _forward!(
             fill_duration_buffers!(
                 log_dur, log_surv, hsmm, control_seq[t + 1], max_duration, N
             )
-            extend_segments!(
+            extend_segments!(;
                 log_ends,
                 log_ongoing,
                 cum_log_obs,
@@ -381,7 +381,7 @@ function forward(
     max_duration::Int=longest_sequence(seq_ends),
     error_if_not_finite::Bool=true,
 )
-    storage = initialize_hsmm_forward(hsmm, obs_seq, control_seq; seq_ends, max_duration)
+    storage = initialize_forward(hsmm, obs_seq, control_seq; seq_ends, max_duration)
     forward!(storage, hsmm, obs_seq, control_seq; seq_ends, error_if_not_finite)
     return storage.α, storage.logL
 end

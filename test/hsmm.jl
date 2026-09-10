@@ -11,7 +11,7 @@ using HiddenMarkovModels:
     elementwise_log,
     StateSegments,
     forward!,
-    initialize_hsmm_forward,
+    initialize_forward,
     log_initialization,
     log_transition_matrix,
     valid_hsmm
@@ -459,7 +459,7 @@ end
         )
         obs_seq = Float32[0.0, 5.0, 0.1, 4.9]
         control_seq = fill(nothing, length(obs_seq))
-        storage = initialize_hsmm_forward(
+        storage = initialize_forward(
             hsmm32, obs_seq, control_seq; seq_ends=(length(obs_seq),)
         )
         @test storage isa HSMMForwardStorage{Float64}
@@ -471,7 +471,7 @@ end
             [Normal(0.0f0, 1.0f0), Normal(5.0f0, 1.0f0)],
             [Geometric(0.4f0), Geometric(0.6f0)],
         )
-        storage32 = initialize_hsmm_forward(
+        storage32 = initialize_forward(
             hsmm_all32, obs_seq, control_seq; seq_ends=(length(obs_seq),)
         )
         @test storage32 isa HSMMForwardStorage{Float32}
@@ -555,7 +555,7 @@ end
             hsmm = rand_hsmm(rng, N)
             obs_seq = randn(rng, T)
             control_seq = fill(nothing, T)
-            storage = initialize_hsmm_forward(
+            storage = initialize_forward(
                 hsmm, obs_seq, control_seq; seq_ends=(T,), max_duration=T
             )
             forward!(storage, hsmm, obs_seq, control_seq; seq_ends=(T,))
@@ -599,7 +599,7 @@ end
         control_seq = fill(nothing, T)
         # An `NTuple{1}` for `seq_ends` disables multithreading, as in the HMM allocation test.
         seq_ends = (T,)
-        storage = initialize_hsmm_forward(hsmm, obs_seq, control_seq; seq_ends)
+        storage = initialize_forward(hsmm, obs_seq, control_seq; seq_ends)
         call_forward!(storage, hsmm, obs_seq, control_seq, seq_ends)  # warm up
         @test (@allocated call_forward!(storage, hsmm, obs_seq, control_seq, seq_ends)) == 0
     end
