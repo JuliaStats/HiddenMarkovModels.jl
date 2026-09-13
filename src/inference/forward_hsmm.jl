@@ -363,6 +363,7 @@ end
 $(SIGNATURES)
 
 Apply the forward algorithm to infer the current state after sequence `obs_seq` for `hsmm`.
+Uses "Explicit Duration HMM" form. Refer to [Yu2010](@cite) for details.
 
 Return a tuple `(storage.α, storage.logL)` where `storage` is of type
 [`HSMMForwardStorage`](@ref).
@@ -372,6 +373,10 @@ right-censored.
 
 `max_duration` limits the sojourn lengths considered. It defaults to the longest sequence, which
 gives the exact result; smaller values trade accuracy for speed.
+
+# References
+
+* [Yu2010](@cite) Yu, "Hidden semi-Markov models", Artificial Intelligence 174(2), 215-243 (2010).
 """
 function forward(
     hsmm::AbstractHSMM,
