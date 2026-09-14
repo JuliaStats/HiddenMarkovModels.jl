@@ -1,4 +1,5 @@
 infnorm(x) = maximum(abs, x)
+infapprox(x, y; atol::Real) = infnorm(x .- y) <= atol
 
 function test_equal_hmms(
     hmm1::AbstractHMM,
@@ -13,9 +14,9 @@ function test_equal_hmms(
             init1 = initialization(hmm1)
             init2 = initialization(hmm2)
             if flip
-                @test !isapprox(init1, init2; atol, norm=infnorm)
+                @test !infapprox(init1, init2; atol)
             else
-                @test isapprox(init1, init2; atol, norm=infnorm)
+                @test infapprox(init1, init2; atol)
             end
         end
     end
@@ -28,9 +29,9 @@ function test_equal_hmms(
                 @test HMMs.mynnz(trans1) == HMMs.mynnz(trans2)
             end
             if flip
-                @test !isapprox(trans1, trans2; atol, norm=infnorm)
+                @test !infapprox(trans1, trans2; atol)
             else
-                @test isapprox(trans1, trans2; atol, norm=infnorm)
+                @test infapprox(trans1, trans2; atol)
             end
         end
     end
@@ -46,9 +47,9 @@ function test_equal_hmms(
                     x1 = getfield(dist1, field)
                     x2 = getfield(dist2, field)
                     if flip
-                        @test !isapprox(x1, x2; atol, norm=infnorm)
+                        @test !infapprox(x1, x2; atol)
                     else
-                        @test isapprox(x1, x2; atol, norm=infnorm)
+                        @test infapprox(x1, x2; atol)
                     end
                 end
             end
