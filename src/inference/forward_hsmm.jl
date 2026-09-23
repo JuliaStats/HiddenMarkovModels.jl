@@ -108,7 +108,7 @@ function fill_duration_buffers!(
         s = convert(R, duration_logsurvival(durs[i], max_duration + 1))
         for d in max_duration:-1:1
             log_dur[d, i] = duration_logdensityof(durs[i], d)
-            s = logaddexp(s, log_dur[d, i])
+            s = logaddexp_safe(s, log_dur[d, i])
             log_surv[d, i] = s
         end
     end
@@ -137,11 +137,13 @@ function accumulate_incoming!(
         for i in 1:N
             # HSMM diagonals may be close to zero rather than exactly zero.
             if i != j
-                log_sum_prev = logaddexp(log_sum_prev, log_ends[i, t] + log_trans[i, j])
+                log_sum_prev = logaddexp_safe(
+                    log_sum_prev, log_ends[i, t] + log_trans[i, j]
+                )
             end
         end
         incoming[j] = log_sum_prev
-        reachable |= log_sum_prev > log_zero
+        reachable |= !is_log_zero(log_sum_prev)
     end
     return reachable
 end
@@ -164,7 +166,7 @@ function extend_segments!(;
         t_end = t + d
         for j in 1:N
             inc = incoming[j]
-            if inc > log_zero
+            if !is_log_zero(inc)
                 log_obs = segment_log_obs(
                     cum_log_obs[j, t_end],
                     cum_log_obs[j, t],
@@ -172,10 +174,12 @@ function extend_segments!(;
                     obs_zeros[j, t],
                     log_zero,
                 )
-                if log_obs > log_zero
+                if !is_log_zero(log_obs)
                     base = inc + log_obs
-                    log_ends[j, t_end] = logaddexp(log_ends[j, t_end], base + log_dur[d, j])
-                    log_ongoing[j, t_end] = logaddexp(
+                    log_ends[j, t_end] = logaddexp_safe(
+                        log_ends[j, t_end], base + log_dur[d, j]
+                    )
+                    log_ongoing[j, t_end] = logaddexp_safe(
                         log_ongoing[j, t_end], base + log_surv[d, j]
                     )
                 end
@@ -232,6 +236,11 @@ function _forward!(
     log_surv = storage.log_surv[k]
     incoming = storage.incoming[k]
     t1, t2 = seq_limits(seq_ends, k)
+    # An empty sequence has likelihood one, as in the HMM forward pass.
+    if t1 > t2
+        logL[k] = zero(R)
+        return nothing
+    end
     N = length(hsmm)
     max_duration = sequence_max_duration(storage.max_duration, t1, t2)
     log_zero = convert(R, -Inf)
@@ -243,7 +252,7 @@ function _forward!(
             view(cum_log_obs, :, t), hsmm, obs_seq[t], control_seq[t]; error_if_not_finite
         )
         for i in 1:N
-            if cum_log_obs[i, t] == log_zero
+            if is_log_zero(cum_log_obs[i, t])
                 cum_log_obs[i, t] = zero(R)
                 obs_zeros[i, t] = 1
             else
@@ -270,10 +279,12 @@ function _forward!(
             log_obs = segment_log_obs(
                 cum_log_obs[i, t_end], zero(R), obs_zeros[i, t_end], 0, log_zero
             )
-            if log_obs > log_zero
+            if !is_log_zero(log_obs)
                 base = log_init[i] + log_obs
-                log_ends[i, t_end] = logaddexp(log_ends[i, t_end], base + log_dur[d, i])
-                log_ongoing[i, t_end] = logaddexp(
+                log_ends[i, t_end] = logaddexp_safe(
+                    log_ends[i, t_end], base + log_dur[d, i]
+                )
+                log_ongoing[i, t_end] = logaddexp_safe(
                     log_ongoing[i, t_end], base + log_surv[d, i]
                 )
             end
@@ -301,18 +312,23 @@ function _forward!(
             )
         end
     else
+        filled_control = control_seq[t1]
         for t in t1:(t2 - 1)
             # Avoid building a controlled transition matrix for an unreachable segment.
             reachable = false
             for i in 1:N
-                reachable |= log_ends[i, t] > log_zero
+                reachable |= !is_log_zero(log_ends[i, t])
             end
             reachable || continue
             log_trans = log_transition_matrix(hsmm, control_seq[t + 1])
             accumulate_incoming!(incoming, log_ends, log_trans, t, N, log_zero) || continue
-            fill_duration_buffers!(
-                log_dur, log_surv, hsmm, control_seq[t + 1], max_duration, N
-            )
+            # Refilling costs `N * max_duration` density evaluations, so skip repeated controls.
+            if !isequal(control_seq[t + 1], filled_control)
+                filled_control = control_seq[t + 1]
+                fill_duration_buffers!(
+                    log_dur, log_surv, hsmm, filled_control, max_duration, N
+                )
+            end
             extend_segments!(;
                 log_ends,
                 log_ongoing,
@@ -373,10 +389,6 @@ right-censored.
 
 `max_duration` limits the sojourn lengths considered. It defaults to the longest sequence, which
 gives the exact result; smaller values trade accuracy for speed.
-
-# References
-
-* [Yu2010](@cite) Yu, "Hidden semi-Markov models", Artificial Intelligence 174(2), 215-243 (2010).
 """
 function forward(
     hsmm::AbstractHSMM,

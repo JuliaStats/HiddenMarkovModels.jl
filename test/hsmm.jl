@@ -15,7 +15,8 @@ using HiddenMarkovModels:
     log_initialization,
     log_transition_matrix,
     valid_hsmm
-using Distributions: Categorical, Geometric, Normal
+using Distributions: Binomial, Categorical, Geometric, Normal
+using ForwardDiff: ForwardDiff
 using Random: AbstractRNG
 using StableRNGs: StableRNG
 using Test
@@ -589,6 +590,63 @@ end
             @test α_hsmm ≈ α_hmm
             @test logL_hsmm ≈ logL_hmm
         end
+    end
+
+    @testset "Empty subsequences" begin
+        hsmm = rand_hsmm(StableRNG(5), 2)
+        obs_seq = randn(StableRNG(6), 5)
+        expected = logdensityof(hsmm, obs_seq)
+        @test logdensityof(hsmm, obs_seq; seq_ends=[0, 5]) ≈ expected
+        @test logdensityof(hsmm, obs_seq; seq_ends=[5, 5]) ≈ expected
+        @test logdensityof(hsmm, obs_seq; seq_ends=[2, 2, 5]) ≈
+            logdensityof(hsmm, obs_seq; seq_ends=[2, 5])
+    end
+
+    @testset "ForwardDiff gradients with impossible terms" begin
+        # Each model makes `-Inf` terms reach the log-domain recursion.
+        function central_difference(f, θ; h=1e-6)
+            return [
+                (f(θ .+ h .* (eachindex(θ) .== i)) - f(θ .- h .* (eachindex(θ) .== i))) /
+                (2h) for i in eachindex(θ)
+            ]
+        end
+        obs_seq = randn(StableRNG(7), 20) .* 2 .+ 3
+        function zero_off_diagonal(θ)
+            trans = [0.0 1.0 0.0; 0.0 0.0 1.0; 1.0 0.0 0.0]
+            dists = [Normal(θ[1]), Normal(θ[2]), Normal(6.0)]
+            return HSMM(fill(1 / 3, 3), trans, dists, [Geometric(θ[3]) for _ in 1:3])
+        end
+        function zero_init(θ)
+            init = [one(θ[1]), zero(θ[1]), zero(θ[1])]
+            trans = [0.0 0.5 0.5; 0.5 0.0 0.5; 0.5 0.5 0.0] .* θ[3] ./ θ[3]
+            dists = [Normal(θ[1]), Normal(θ[2]), Normal(6.0)]
+            return HSMM(init, trans, dists, [Geometric(0.3) for _ in 1:3])
+        end
+        function bounded_durations(θ)
+            trans = [0.0 0.5 0.5; 0.5 0.0 0.5; 0.5 0.5 0.0]
+            dists = [Normal(θ[1]), Normal(θ[2]), Normal(6.0)]
+            return HSMM(fill(1 / 3, 3), trans, dists, [Binomial(4, θ[3]) for _ in 1:3])
+        end
+        θ = [0.0, 3.0, 0.4]
+        for build in (zero_off_diagonal, zero_init, bounded_durations)
+            f(θ) = logdensityof(build(θ), obs_seq)
+            g = ForwardDiff.gradient(f, θ)
+            @test all(isfinite, g)
+            @test g ≈ central_difference(f, θ) rtol = 1e-5
+        end
+
+        # A differentiated zero-probability emission must still be counted as impossible.
+        function impossible_obs(θ)
+            trans = [0.0 1.0; 1.0 0.0]
+            dists = [
+                Categorical([zero(θ[1]), θ[1], 1 - θ[1]]), Categorical([0.3, 0.3, 0.4])
+            ]
+            return HSMM([0.5, 0.5], trans, dists, [Geometric(θ[2]), Geometric(0.5)])
+        end
+        f_obs(θ) = logdensityof(impossible_obs(θ), [1, 2, 3, 3, 1, 2])
+        g = ForwardDiff.gradient(f_obs, [0.4, 0.3])
+        @test all(isfinite, g)
+        @test g ≈ central_difference(f_obs, [0.4, 0.3]) rtol = 1e-5
     end
 
     @testset "Allocations" begin
