@@ -11,12 +11,12 @@ module HiddenMarkovModels
 
 using ArgCheck: @argcheck
 using Base: RefValue
-using Base.Threads: @threads
 using ChainRulesCore: ChainRulesCore, NoTangent, RuleConfig, rrule_via_ad
 using DensityInterface: DensityInterface, DensityKind, HasDensity, NoDensity, logdensityof
 using DocStringExtensions
 using FillArrays: AbstractFill, Fill
 using LinearAlgebra: Transpose, axpy!, Diagonal, dot, ldiv!, lmul!, mul!, parent
+using OhMyThreads: DynamicScheduler, SerialScheduler, tforeach
 using ProgressLogging: @withprogress, @logprogress
 using Random: Random, AbstractRNG, default_rng
 using SparseArrays: AbstractSparseArray, SparseMatrixCSC, nonzeros, nnz, nzrange, rowvals
@@ -43,6 +43,7 @@ include("utils/lightcategorical.jl")
 include("utils/limits.jl")
 include("utils/segments.jl")
 include("utils/duration.jl")
+include("utils/threading.jl")
 
 include("inference/predict.jl")
 include("inference/forward.jl")

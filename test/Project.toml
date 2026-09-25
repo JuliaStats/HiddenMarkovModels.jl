@@ -7,6 +7,8 @@ Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+HMMTest = "619c5ee3-2be3-4444-b95f-50aebd0fbf42"
+HiddenMarkovModels = "84ca31d5-effc-45e0-bfda-5a68cd981f47"
 JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 JuliaFormatter = "98e50ef6-434e-11e9-1051-2b60c6c9e899"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -24,6 +26,10 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 StatsAPI = "82ae8749-77ed-4fe6-ae5f-f523153014b0"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
+
+[sources]
+HMMTest = {path = "../libs/HMMTest"}
+HiddenMarkovModels = {path = ".."}
 
 [compat]
 Distributions = "0.25.0 - 0.25.128"

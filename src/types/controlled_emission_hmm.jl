@@ -174,23 +174,12 @@ function StatsAPI.fit!(
 )
     (; γ, ξ) = fb_storage
 
-    if seq_ends isa NTuple
-        for k in eachindex(seq_ends)
-            t1, t2 = seq_limits(seq_ends, k)
-            scratch = ξ[t2]
-            fill!(scratch, zero(eltype(scratch)))
-            for t in t1:(t2 - 1)
-                scratch .+= ξ[t]
-            end
-        end
-    else
-        @threads for k in eachindex(seq_ends)
-            t1, t2 = seq_limits(seq_ends, k)
-            scratch = ξ[t2]
-            fill!(scratch, zero(eltype(scratch)))
-            for t in t1:(t2 - 1)
-                scratch .+= ξ[t]
-            end
+    foreach_sequence(seq_ends) do k
+        t1, t2 = seq_limits(seq_ends, k)
+        scratch = ξ[t2]
+        fill!(scratch, zero(eltype(scratch)))
+        for t in t1:(t2 - 1)
+            scratch .+= ξ[t]
         end
     end
 

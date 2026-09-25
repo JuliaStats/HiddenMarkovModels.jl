@@ -82,18 +82,10 @@ function forward_backward!(
     seq_ends::AbstractVectorOrNTuple{Int},
     transition_marginals::Bool=true,
 )
-    if seq_ends isa NTuple{1}
-        for k in eachindex(seq_ends)
-            _forward_backward!(
-                storage, hmm, obs_seq, control_seq, seq_ends, k; transition_marginals
-            )
-        end
-    else
-        @threads for k in eachindex(seq_ends)
-            _forward_backward!(
-                storage, hmm, obs_seq, control_seq, seq_ends, k; transition_marginals
-            )
-        end
+    foreach_sequence(seq_ends) do k
+        _forward_backward!(
+            storage, hmm, obs_seq, control_seq, seq_ends, k; transition_marginals
+        )
     end
     return nothing
 end

@@ -363,14 +363,8 @@ function forward!(
     seq_ends::AbstractVectorOrNTuple{Int},
     error_if_not_finite::Bool=true,
 )
-    if seq_ends isa NTuple{1}
-        for k in eachindex(seq_ends)
-            _forward!(storage, hsmm, obs_seq, control_seq, seq_ends, k; error_if_not_finite)
-        end
-    else
-        @threads for k in eachindex(seq_ends)
-            _forward!(storage, hsmm, obs_seq, control_seq, seq_ends, k; error_if_not_finite)
-        end
+    foreach_sequence(seq_ends) do k
+        _forward!(storage, hsmm, obs_seq, control_seq, seq_ends, k; error_if_not_finite)
     end
     return nothing
 end

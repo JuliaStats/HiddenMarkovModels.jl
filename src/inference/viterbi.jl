@@ -62,8 +62,15 @@ function _viterbi!(
         ϕₜ .+= logBₜ
     end
 
-    ϕₜ₂ = view(ϕ, :, t2)
-    q[t2] = argmax(ϕₜ₂)
+    #= A plain loop rather than `argmax`. Inference mistakes for recursion
+    when called from within the threaded reduction of `foreach_sequence`. =#
+    iₘ = 1
+    for i in axes(ϕ, 1)
+        if ϕ[i, t2] > ϕ[iₘ, t2]
+            iₘ = i
+        end
+    end
+    q[t2] = iₘ
     logL[k] = ϕ[q[t2], t2]
     for t in (t2 - 1):-1:t1
         q[t] = ψ[q[t + 1], t + 1]
@@ -83,14 +90,8 @@ function viterbi!(
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
 ) where {R}
-    if seq_ends isa NTuple{1}
-        for k in eachindex(seq_ends)
-            _viterbi!(storage, hmm, obs_seq, control_seq, seq_ends, k)
-        end
-    else
-        @threads for k in eachindex(seq_ends)
-            _viterbi!(storage, hmm, obs_seq, control_seq, seq_ends, k)
-        end
+    foreach_sequence(seq_ends) do k
+        _viterbi!(storage, hmm, obs_seq, control_seq, seq_ends, k)
     end
     return nothing
 end
