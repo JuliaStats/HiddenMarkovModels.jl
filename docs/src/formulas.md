@@ -288,6 +288,56 @@ With the default $D$, this means $O(N T^2)$, so a smaller $D$ is advisable for l
 Segments longer than the support of every sojourn distribution are skipped, so bounded supports reduce $D$ automatically.
 The alternative is to augment the state with the remaining sojourn time and reuse the vanilla forward pass on $N D$ states, which shares more code but requires $O(N D T)$ memory.
 
+## Explicit-duration HSMM forward-backward
+
+### Recursion
+
+The backward pass mirrors the forward pass with two variables, both conditioned on a segment boundary:
+
+```math
+\begin{align*}
+G_{i,t} & = \mathbb{P}(Y_{t+1:T} | X_t=i, \text{the sojourn in } i \text{ ends at } t) \\
+H_{j,s} & = \mathbb{P}(Y_{s:T} | X_s=j, \text{a sojourn in } j \text{ starts at } s)
+\end{align*}
+```
+
+No observations remain after the end of the sequence, so $G_{i,T} = 1$.
+Decomposing over the duration $d$ of the sojourn starting at $s$, and over the next state, we get
+
+```math
+\begin{align*}
+H_{j,s} & = \sum_{d=1}^{T-s} \left(\prod_{u=s}^{s+d-1} b_{j,u}\right) p_j(d) \, G_{j,s+d-1} + \left(\prod_{u=s}^{T} b_{j,u}\right) S_j(T-s+1) \\
+G_{i,t} & = \sum_{j \neq i} a_{i,j,t} H_{j,t+1}
+\end{align*}
+```
+
+where the last term of $H$ accounts for the right-censored final segment.
+As in the forward pass, $p_j$, $S_j$ and $a_{i,j,t}$ follow the control at the start of the segment they describe, and the durations are truncated at $D$.
+
+### Marginals
+
+With the convention $I_{j,0} = \pi_j$, the mass entering state $j$ at time $s$ is $I_{j,s-1}$.
+The posterior probability of a sojourn in $j$ covering exactly $s, \dots, s+d-1$ is
+
+```math
+w_{j,s,d} = \frac{1}{\mathcal{L}} I_{j,s-1} \left(\prod_{u=s}^{s+d-1} b_{j,u}\right) \times \begin{cases} p_j(d) \, G_{j,s+d-1} & \text{if } s+d-1 < T \\ S_j(d) & \text{if } s+d-1 = T \end{cases}
+```
+
+The one-state marginals add up the sojourns covering $t$, and the two-state marginals are nonzero only for a segment boundary:
+
+```math
+\begin{align*}
+\gamma_{j,t} & = \mathbb{P}(X_t=j | Y_{1:T}) = \sum_{s \leq t} \sum_{d \geq t-s+1} w_{j,s,d} \\
+\xi_{i,j,t} & = \mathbb{P}(X_t=i, X_{t+1}=j | Y_{1:T}) = \frac{1}{\mathcal{L}} E_{i,t} a_{i,j,t} H_{j,t+1} \qquad (i \neq j)
+\end{align*}
+```
+
+The inner sum in $\gamma$ is a tail sum over durations, which we accumulate from the longest duration down.
+This costs $O(N T D)$ like the recursion itself, and unlike the alternative $\gamma_{j,t+1} = \gamma_{j,t} + \sum_{i \neq j} \xi_{i,j,t} - \sum_{k \neq j} \xi_{j,k,t}$ it never subtracts probabilities.
+The identity still holds and serves as a consistency check.
+
+Everything is computed during a single backward sweep over $s$, in the log domain: when the sweep reaches $s$, the variables $G_{\cdot, s:T}$ are already known, so $H_{\cdot, s}$, the weights $w_{\cdot,s,\cdot}$ and then $G_{\cdot, s-1}$ and $\xi_{\cdot,\cdot,s-1}$ follow.
+
 ## Bibliography
 
 ```@bibliography

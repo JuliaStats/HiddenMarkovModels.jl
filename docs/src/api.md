@@ -95,6 +95,12 @@ HiddenMarkovModels.initialize_forward_backward
 HiddenMarkovModels.forward_backward!
 ```
 
+### Forward-backward (HSMM)
+
+```@docs
+HiddenMarkovModels.HSMMForwardBackwardStorage
+```
+
 ### Baum-Welch
 
 ```@docs
