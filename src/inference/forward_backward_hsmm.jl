@@ -192,7 +192,7 @@ function _forward_backward!(
     for s in t2:-1:t1
         if !uniform && (s == t2 || !isequal(control_seq[s], filled_control))
             filled_control = control_seq[s]
-            fill_duration_buffers!(log_dur, log_surv, hsmm, filled_control, max_duration, N)
+            fill_duration_buffers!(log_dur, log_surv, hsmm, filled_control, max_duration)
         end
         # The control at time `s` drives the transition into time `s`.
         log_trans = log_transition_matrix(hsmm, uniform ? control_seq[t1] : control_seq[s])
