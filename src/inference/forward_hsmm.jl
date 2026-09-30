@@ -1,6 +1,9 @@
 """
 $(TYPEDEF)
 
+The per-sequence buffers are sized from the `seq_ends` given to [`initialize_forward`](@ref), so
+[`forward!`](@ref) must be called with the same `seq_ends`.
+
 # Fields
 
 Only the fields with a description are part of the public API.
@@ -12,7 +15,7 @@ struct HSMMForwardStorage{R}
     α::Matrix{R}
     "one loglikelihood per observation sequence"
     logL::Vector{R}
-    "longest sojourn duration considered for any segment"
+    "longest sojourn duration the EM algorithm will consider"
     max_duration::Int
     # Internal buffers
     # `log_ends[j,t] = log E[j,t]`, the sojourn in `j` ends at `t`
@@ -107,6 +110,8 @@ function initialize_forward(
     )
 end
 
+#= Return the longest duration with nonzero survival for some state. Since survival is
+nonincreasing, longer segments are impossible and can be skipped, e.g. for bounded supports. =#
 function fill_duration_buffers!(
     log_dur::AbstractMatrix{R},
     log_surv::AbstractMatrix{R},
@@ -115,6 +120,7 @@ function fill_duration_buffers!(
     max_duration::Integer,
 ) where {R}
     durs = duration_distributions(hsmm, control)
+    support = 0
     for i in 1:length(hsmm)
         # Seed beyond the cutoff, then accumulate backward without subtracting probabilities.
         s = convert(R, duration_logsurvival(durs[i], max_duration + 1))
@@ -122,9 +128,12 @@ function fill_duration_buffers!(
             log_dur[d, i] = duration_logdensityof(durs[i], d)
             s = logaddexp_safe(s, log_dur[d, i])
             log_surv[d, i] = s
+            if d > support && !is_log_zero(s)
+                support = d
+            end
         end
     end
-    return nothing
+    return support
 end
 
 # A changed zero count means the segment contains an impossible observation.
@@ -138,7 +147,7 @@ end
 function accumulate_incoming!(
     incoming::AbstractVector{R},
     log_ends::AbstractMatrix{R},
-    log_trans,
+    log_trans::AbstractMatrix,
     t::Integer,
     N::Integer,
     log_zero::R,
@@ -153,6 +162,32 @@ function accumulate_incoming!(
                 log_sum_prev = logaddexp_safe(
                     log_sum_prev, log_ends[i, t] + log_trans[i, j]
                 )
+            end
+        end
+        incoming[j] = log_sum_prev
+        reachable |= !is_log_zero(log_sum_prev)
+    end
+    return reachable
+end
+
+#= `elementwise_log` only takes the log of stored entries, so a structural zero would read as
+`log(1)`. Visit the stored entries of each column instead, which also costs O(nnz). =#
+function accumulate_incoming!(
+    incoming::AbstractVector{R},
+    log_ends::AbstractMatrix{R},
+    log_trans::SparseMatrixCSC,
+    t::Integer,
+    N::Integer,
+    log_zero::R,
+) where {R}
+    rows, vals = rowvals(log_trans), nonzeros(log_trans)
+    reachable = false
+    for j in 1:N
+        log_sum_prev = log_zero
+        for p in nzrange(log_trans, j)
+            i = rows[p]
+            if i != j
+                log_sum_prev = logaddexp_safe(log_sum_prev, log_ends[i, t] + vals[p])
             end
         end
         incoming[j] = log_sum_prev
@@ -285,8 +320,8 @@ function _forward!(
     @views log_ongoing[:, t1:t2] .= log_zero
 
     # The control at the start of a segment selects its duration distribution.
-    fill_duration_buffers!(log_dur, log_surv, hsmm, control_seq[t1], max_duration)
-    for d in 1:max_duration
+    support = fill_duration_buffers!(log_dur, log_surv, hsmm, control_seq[t1], max_duration)
+    for d in 1:support
         t_end = t1 + d - 1
         for i in 1:N
             log_obs = segment_log_obs(
@@ -320,11 +355,14 @@ function _forward!(
                 t,
                 t2,
                 N,
-                max_duration,
+                max_duration=support,
                 log_zero,
             )
         end
     else
+        # Rebuilding either costs `N^2` or `N * max_duration` evaluations, so skip repeated controls.
+        trans_control = control_seq[t1]
+        log_trans = log_transition_matrix(hsmm, trans_control)
         filled_control = control_seq[t1]
         for t in t1:(t2 - 1)
             # Avoid building a controlled transition matrix for an unreachable segment.
@@ -333,12 +371,14 @@ function _forward!(
                 reachable |= !is_log_zero(log_ends[i, t])
             end
             reachable || continue
-            log_trans = log_transition_matrix(hsmm, control_seq[t + 1])
+            if !isequal(control_seq[t + 1], trans_control)
+                trans_control = control_seq[t + 1]
+                log_trans = log_transition_matrix(hsmm, trans_control)
+            end
             accumulate_incoming!(incoming, log_ends, log_trans, t, N, log_zero) || continue
-            # Refilling costs `N * max_duration` density evaluations, so skip repeated controls.
             if !isequal(control_seq[t + 1], filled_control)
                 filled_control = control_seq[t + 1]
-                fill_duration_buffers!(
+                support = fill_duration_buffers!(
                     log_dur, log_surv, hsmm, filled_control, max_duration
                 )
             end
@@ -353,7 +393,7 @@ function _forward!(
                 t,
                 t2,
                 N,
-                max_duration,
+                max_duration=support,
                 log_zero,
             )
         end
@@ -392,7 +432,7 @@ end
 $(SIGNATURES)
 
 Apply the forward algorithm to infer the current state after sequence `obs_seq` for `hsmm`.
-Uses "Explicit Duration HMM" form. Refer to [Yu2010](@cite) for details.
+Uses the explicit-duration formulation of [Yu2010](@cite), Section 3.1.
 
 Return a tuple `(storage.α, storage.logL)` where `storage` is of type
 [`HSMMForwardStorage`](@ref).
@@ -401,7 +441,9 @@ Return a tuple `(storage.α, storage.logL)` where `storage` is of type
 right-censored.
 
 `max_duration` limits the sojourn lengths considered. It defaults to the longest sequence, which
-gives the exact result; smaller values trade accuracy for speed.
+gives the exact result but costs O(N T²) per sequence of length T. For long sequences, a smaller
+value brings this down to O(N T `max_duration`), at the price of underestimating the
+loglikelihood.
 """
 function forward(
     hsmm::AbstractHSMM,

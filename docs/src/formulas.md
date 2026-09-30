@@ -216,6 +216,7 @@ Following [Yu2010](@cite) (see also [Johnson2014](@cite)), we add the following 
 * let $D$ be a truncation level, encoded by the convention $p_i(d) = S_i(d) = 0$ for $d > D$
 
 A segment entered at time $s$ uses the transition probabilities and sojourn distributions selected by the control $U_s$, i.e., the one in effect at its first timestep.
+In particular, as in the vanilla case, $a_{i,j,t}$ is the transition matrix under $U_{t+1}$, since the jump from $t$ to $t+1$ enters a segment starting at $t+1$.
 
 Observations, on the other hand, use the control at the current timestep; $b_{j,u}$ depends on $U_u$.
 
@@ -283,6 +284,8 @@ For $D < T$, every path containing a completed sojourn longer than $D$ is droppe
 Note that the convention $S_j(d) = 0$ for $d > D$ only stops the enumeration of longer segments: a segment running for $d \leq D$ timesteps still carries the full mass $\mathbb{P}(D_j \geq d)$ of all longer sojourns.
 
 The cost is $O(N^2 T)$ for the transitions plus $O(N T D)$ for the segments, with $O(N T)$ memory.
+With the default $D$, this means $O(N T^2)$, so a smaller $D$ is advisable for long sequences.
+Segments longer than the support of every sojourn distribution are skipped, so bounded supports reduce $D$ automatically.
 The alternative is to augment the state with the remaining sojourn time and reuse the vanilla forward pass on $N D$ states, which shares more code but requires $O(N D T)$ memory.
 
 ## Bibliography

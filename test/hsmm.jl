@@ -9,6 +9,7 @@ using HiddenMarkovModels:
     duration_logsurvival,
     duration_logdensity_type,
     elementwise_log,
+    Fill,
     StateSegments,
     forward!,
     initialize_forward,
@@ -19,6 +20,7 @@ using Distributions: Binomial, Categorical, Geometric, Normal
 using FiniteDifferences: FiniteDifferences, central_fdm
 using ForwardDiff: ForwardDiff
 using Random: AbstractRNG
+using SparseArrays: sparse
 using StableRNGs: StableRNG
 using Test
 
@@ -444,6 +446,64 @@ end
         end
         @test logdensityof(hsmm, obs_seq, [1, 1, 2, 2, 1, 1]) !=
             logdensityof(hsmm, obs_seq, [2, 2, 1, 1, 2, 2])
+
+        # A `Fill` of a real control takes the fast path for constant controls.
+        for c in 1:2
+            expected = brute_force_logdensityof(hsmm, obs_seq, fill(c, T), 2)
+            @test logdensityof(hsmm, obs_seq, Fill(c, T)) ≈ expected
+            @test logdensityof(hsmm, obs_seq, fill(c, T)) ≈ expected
+            @test forward(hsmm, obs_seq, Fill(c, T))[1] ≈
+                brute_force_marginals(hsmm, obs_seq, fill(c, T), 2)
+        end
+    end
+
+    @testset "Sparse transition matrix" begin
+        # Structural zeros must be read as impossible transitions, not as `log(1)`.
+        init = [0.5, 0.3, 0.2]
+        trans = [0.0 0.5 0.5; 1.0 0.0 0.0; 1.0 0.0 0.0]
+        dists = [Normal(0.0), Normal(3.0), Normal(6.0)]
+        durs = [Geometric(0.3) for _ in 1:3]
+        hsmm_dense = HSMM(init, trans, dists, durs)
+        hsmm_sparse = HSMM(init, sparse(trans), dists, durs)
+        rng = StableRNG(1)
+        for T in (6, 10)
+            obs_seq = 3 .* randn(rng, T)
+            α_dense, logL_dense = forward(hsmm_dense, obs_seq)
+            α_sparse, logL_sparse = forward(hsmm_sparse, obs_seq)
+            @test logL_sparse ≈ logL_dense
+            @test α_sparse ≈ α_dense
+        end
+        obs_seq = 3 .* randn(rng, 6)
+        @test logdensityof(hsmm_sparse, obs_seq) ≈
+            brute_force_logdensityof(hsmm_sparse, obs_seq, fill(nothing, 6), 3)
+
+        # The path `2 → 3` uses a forbidden transition.
+        obs_seq = [3.0, 6.0, 0.0]
+        for state_seq in ([2, 3, 1], [1, 2, 1])
+            @test joint_logdensityof(hsmm_sparse, obs_seq, state_seq) ==
+                joint_logdensityof(hsmm_dense, obs_seq, state_seq)
+        end
+        @test joint_logdensityof(hsmm_sparse, obs_seq, [2, 3, 1]) == -Inf
+    end
+
+    @testset "Bounded duration support" begin
+        # Sojourns last at most 3 timesteps, so longer segments are skipped.
+        init = [0.6, 0.4]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Normal(0.0), Normal(3.0)]
+        hsmm = HSMM(init, trans, dists, [Binomial(2, 0.4), Binomial(1, 0.7)])
+        rng = StableRNG(12)
+        T = 7
+        obs_seq = 3 .* randn(rng, T)
+        control_seq = fill(nothing, T)
+        exact = logdensityof(hsmm, obs_seq)
+        @test exact ≈ brute_force_logdensityof(hsmm, obs_seq, control_seq, 2)
+        @test forward(hsmm, obs_seq)[1] ≈
+            brute_force_marginals(hsmm, obs_seq, control_seq, 2)
+        for max_duration in 3:T
+            @test logdensityof(hsmm, obs_seq; max_duration) == exact
+        end
+        @test logdensityof(hsmm, obs_seq; max_duration=2) < exact
     end
 
     @testset "Duck-typed duration distributions" begin
@@ -578,6 +638,7 @@ end
             )
             forward!(storage, hsmm, obs_seq, control_seq; seq_ends=(T,))
             expected = brute_force_marginals(hsmm, obs_seq, control_seq, N)
+            # `log_prefix` is an internal buffer, checked here to cover every prefix at once.
             for t in 1:T
                 @test storage.log_prefix[t] ≈
                     brute_force_logdensityof(hsmm, obs_seq[1:t], control_seq[1:t], N)

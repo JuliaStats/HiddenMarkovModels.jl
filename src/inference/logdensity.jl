@@ -17,6 +17,10 @@ end
 $(SIGNATURES)
 
 Run the forward algorithm to compute the loglikelihood of `obs_seq` for `hsmm`, integrating over all possible state sequences.
+
+Unlike [`forward`](@ref), this never throws when the loglikelihood is not finite, and returns `-Inf` instead.
+
+`max_duration` limits the sojourn lengths considered, see [`forward`](@ref). The default is exact but costs O(N T²) per sequence of length T, so consider a smaller value for long sequences.
 """
 function DensityInterface.logdensityof(
     hsmm::AbstractHSMM,
@@ -105,8 +109,9 @@ function joint_logdensityof(
                 logL += duration_logsurvival(durations[i], d)
             else
                 logL += duration_logdensityof(durations[i], d)
-                logtrans = log_transition_matrix(hsmm, control_seq[t_end + 1])
-                logL += logtrans[i, state_seq[t_end + 1]]
+                # Index the probabilities, since a sparse log matrix reads structural zeros as `0`.
+                trans = transition_matrix(hsmm, control_seq[t_end + 1])
+                logL += log(trans[i, state_seq[t_end + 1]])
             end
         end
     end
