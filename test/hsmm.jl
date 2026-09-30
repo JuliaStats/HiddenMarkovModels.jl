@@ -16,6 +16,7 @@ using HiddenMarkovModels:
     log_transition_matrix,
     valid_hsmm
 using Distributions: Binomial, Categorical, Geometric, Normal
+using FiniteDifferences: FiniteDifferences, central_fdm
 using ForwardDiff: ForwardDiff
 using Random: AbstractRNG
 using StableRNGs: StableRNG
@@ -286,28 +287,31 @@ end
 
 all_state_seqs(N, T) = (collect(s) for s in Iterators.product(ntuple(_ -> 1:N, T)...))
 
-# An independent oracle for `forward`.
+
 function brute_force_logdensityof(hsmm, obs_seq, control_seq, N)
     T = length(obs_seq)
-    return log(
-        sum(
-            exp(joint_logdensityof(hsmm, obs_seq, s, control_seq)) for
-            s in all_state_seqs(N, T)
+    return Float64(
+        log(
+            sum(
+                exp(big(joint_logdensityof(hsmm, obs_seq, s, control_seq))) for
+                s in all_state_seqs(N, T)
+            ),
         ),
     )
 end
 
-# An independent oracle for the filtered state marginals returned by `forward`.
 function brute_force_marginals(hsmm, obs_seq, control_seq, N)
     T = length(obs_seq)
-    α = zeros(N, T)
+    α = zeros(BigFloat, N, T)
     for t in 1:T
         for s in all_state_seqs(N, t)
-            α[s[t], t] += exp(joint_logdensityof(hsmm, obs_seq[1:t], s, control_seq[1:t]))
+            α[s[t], t] += exp(
+                big(joint_logdensityof(hsmm, obs_seq[1:t], s, control_seq[1:t]))
+            )
         end
         α[:, t] ./= sum(α[:, t])
     end
-    return α
+    return Float64.(α)
 end
 
 # Ensure `@allocated` sees concretely typed arguments.
@@ -436,6 +440,8 @@ end
         for control_seq in ([1, 2, 1, 2, 1, 2], [1, 1, 2, 2, 1, 1], [2, 2, 2, 1, 1, 1])
             @test logdensityof(hsmm, obs_seq, control_seq; max_duration=T) ≈
                 brute_force_logdensityof(hsmm, obs_seq, control_seq, 2)
+            α, _ = forward(hsmm, obs_seq, control_seq; max_duration=T)
+            @test α ≈ brute_force_marginals(hsmm, obs_seq, control_seq, 2)
         end
         @test logdensityof(hsmm, obs_seq, [1, 1, 2, 2, 1, 1]) !=
             logdensityof(hsmm, obs_seq, [2, 2, 1, 1, 2, 2])
@@ -449,6 +455,17 @@ end
         hsmm_duck = HSMM(init, trans, dists, [DuckGeometric(0.4), DuckGeometric(0.6)])
         obs_seq = randn(StableRNG(9), 8)
         @test logdensityof(hsmm_duck, obs_seq) ≈ logdensityof(hsmm_ref, obs_seq)
+    end
+
+    @testset "Near-zero diagonal is ignored" begin
+        # `valid_hsmm` tolerates diagonal entries up to `eps`.
+        init = [0.6, 0.4]
+        dists = [Normal(0.0, 1.0), Normal(5.0, 1.0)]
+        durs = [Geometric(0.4), Geometric(0.6)]
+        hsmm_zero = HSMM(init, [0.0 1.0; 1.0 0.0], dists, durs)
+        hsmm_eps = HSMM(init, [1e-17 1.0; 1.0 1e-17], dists, durs)
+        obs_seq = randn(StableRNG(10), 8)
+        @test forward(hsmm_eps, obs_seq) == forward(hsmm_zero, obs_seq)
     end
 
     @testset "Type promotion" begin
@@ -528,8 +545,8 @@ end
         end
         errors = [abs(logdensityof(hsmm, obs_seq; max_duration=d) - exact) for d in 1:T]
         @test issorted(errors; rev=true)
-        for d in 1:T
-            @test logdensityof(hsmm, obs_seq; max_duration=d) <= exact
+        for d in 1:(T - 1)
+            @test logdensityof(hsmm, obs_seq; max_duration=d) < exact
         end
         @test errors[1] > 1e-3
         @test errors[T] == 0
@@ -604,12 +621,7 @@ end
 
     @testset "ForwardDiff gradients with impossible terms" begin
         # Each model makes `-Inf` terms reach the log-domain recursion.
-        function central_difference(f, θ; h=1e-6)
-            return [
-                (f(θ .+ h .* (eachindex(θ) .== i)) - f(θ .- h .* (eachindex(θ) .== i))) /
-                (2h) for i in eachindex(θ)
-            ]
-        end
+        fd_gradient(f, θ) = only(FiniteDifferences.grad(central_fdm(5, 1), f, θ))
         obs_seq = randn(StableRNG(7), 20) .* 2 .+ 3
         function zero_off_diagonal(θ)
             trans = [0.0 1.0 0.0; 0.0 0.0 1.0; 1.0 0.0 0.0]
@@ -632,10 +644,11 @@ end
             f(θ) = logdensityof(build(θ), obs_seq)
             g = ForwardDiff.gradient(f, θ)
             @test all(isfinite, g)
-            @test g ≈ central_difference(f, θ) rtol = 1e-5
+            @test g ≈ fd_gradient(f, θ) rtol = 1e-5
         end
 
-        # A differentiated zero-probability emission must still be counted as impossible.
+        # Here `b[1,t] = 0` whenever `obs_seq[t] = 1`, but as a `Dual`, so its log has value
+        # `-Inf` with NaN partials. It must still be caught by the zero count of the prefix sums.
         function impossible_obs(θ)
             trans = [0.0 1.0; 1.0 0.0]
             dists = [
@@ -646,7 +659,7 @@ end
         f_obs(θ) = logdensityof(impossible_obs(θ), [1, 2, 3, 3, 1, 2])
         g = ForwardDiff.gradient(f_obs, [0.4, 0.3])
         @test all(isfinite, g)
-        @test g ≈ central_difference(f_obs, [0.4, 0.3]) rtol = 1e-5
+        @test g ≈ fd_gradient(f_obs, [0.4, 0.3]) rtol = 1e-5
     end
 
     @testset "Allocations" begin

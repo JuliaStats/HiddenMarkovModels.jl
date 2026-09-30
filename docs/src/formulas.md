@@ -217,6 +217,8 @@ Following [Yu2010](@cite) (see also [Johnson2014](@cite)), we add the following 
 
 A segment entered at time $s$ uses the transition probabilities and sojourn distributions selected by the control $U_s$, i.e., the one in effect at its first timestep.
 
+Observations, on the other hand, use the control at the current timestep; $b_{j,u}$ depends on $U_u$.
+
 ### Recursion
 
 The forward pass tracks two variables instead of one:
@@ -245,7 +247,8 @@ F_{j,t} & = \pi_j \left(\prod_{u=1}^{t} b_{j,u}\right) S_j(t) + \sum_{s=1}^{t-1}
 ```
 
 where the first term accounts for the segment starting the sequence.
-In this package, the recursion is carried out in the log domain instead of being scaled.
+Unlike the vanilla forward pass, this recursion is carried out in the log domain instead of being scaled.
+Each $F_{j,t}$ mixes segments with different starting times, and hence different products of observation likelihoods, so working with log-probabilities is simpler than tracking scaling factors across all of them.
 
 ### Likelihood and marginals
 

@@ -13,7 +13,8 @@ function elementwise_log(A::SparseMatrixCSC)
     return SparseMatrixCSC(A.m, A.n, A.colptr, A.rowval, log.(A.nzval))
 end
 
-# Unlike `x == -Inf` or `x > -Inf`, this ignores partials.
+#= Check that `x` is `log(0)` by its value alone. Since ForwardDiff 1.0, `==` also compares the
+partials of a `Dual`, and `log(0)` has NaN partials, so `x == -Inf` would be false. =#
 @inline is_log_zero(x) = isinf(x) && x < zero(x)
 
 # Skip impossible terms instead of passing them to `logaddexp`.

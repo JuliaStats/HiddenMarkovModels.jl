@@ -14,13 +14,22 @@ struct HSMMForwardStorage{R}
     logL::Vector{R}
     "longest sojourn duration considered for any segment"
     max_duration::Int
+    # Internal buffers
+    # `log_ends[j,t] = log E[j,t]`, the sojourn in `j` ends at `t`
     log_ends::Matrix{R}
+    # `log_ongoing[j,t] = log F[j,t]`, the sojourn in `j` covers `t`
     log_ongoing::Matrix{R}
+    # `log_prefix[t] = log ℙ(Y[1:t]) = log Σ_j F[j,t]`
     log_prefix::Vector{R}
+    # `cum_log_obs[j,t] = ℓ[j,t]`, sum of the finite `log b[j,u]` for `u ≤ t`
     cum_log_obs::Matrix{R}
+    # `obs_zeros[j,t] = z[j,t]`, number of `b[j,u] = 0` for `u ≤ t`
     obs_zeros::Matrix{Int}
+    # `log_dur[k][d,j] = log p_j(d)` for sequence `k`
     log_dur::Vector{Matrix{R}}
+    # `log_surv[k][d,j] = log S_j(d)` for sequence `k`
     log_surv::Vector{Matrix{R}}
+    # `incoming[k][j] = log I[j,t]` for sequence `k` at the current `t`
     incoming::Vector{Vector{R}}
 end
 
@@ -58,7 +67,11 @@ function initialize_forward(
     α = Matrix{R}(undef, N, T)
     logL = Vector{R}(undef, K)
 
-    # Completed segments drive the recursion; ongoing segments give the filtered marginals.
+    #= `log_ends[j,t]`: the stay in `j` ends exactly at `t`. Only these paths can switch state
+    at `t+1`, so they seed the next segments.
+
+    `log_ongoing[j,t]`: the stay in `j` includes `t` and may last longer. These are the
+    paths consistent with `Y[1:t]`, so normalizing them over `j` gives `α[:, t]`. =#
     log_ends = Matrix{R}(undef, N, T)
     log_ongoing = Matrix{R}(undef, N, T)
     log_prefix = Vector{R}(undef, T)
@@ -100,10 +113,9 @@ function fill_duration_buffers!(
     hsmm::AbstractHSMM,
     control,
     max_duration::Integer,
-    N::Integer,
 ) where {R}
     durs = duration_distributions(hsmm, control)
-    for i in 1:N
+    for i in 1:length(hsmm)
         # Seed beyond the cutoff, then accumulate backward without subtracting probabilities.
         s = convert(R, duration_logsurvival(durs[i], max_duration + 1))
         for d in max_duration:-1:1
@@ -135,7 +147,8 @@ function accumulate_incoming!(
     for j in 1:N
         log_sum_prev = log_zero
         for i in 1:N
-            # HSMM diagonals may be close to zero rather than exactly zero.
+            #= `valid_hsmm` tolerates diagonal entries up to `eps`, and staying in `j` is not a
+            new sojourn, so skip the diagonal as `joint_logdensityof` does. =#
             if i != j
                 log_sum_prev = logaddexp_safe(
                     log_sum_prev, log_ends[i, t] + log_trans[i, j]
@@ -272,7 +285,7 @@ function _forward!(
     @views log_ongoing[:, t1:t2] .= log_zero
 
     # The control at the start of a segment selects its duration distribution.
-    fill_duration_buffers!(log_dur, log_surv, hsmm, control_seq[t1], max_duration, N)
+    fill_duration_buffers!(log_dur, log_surv, hsmm, control_seq[t1], max_duration)
     for d in 1:max_duration
         t_end = t1 + d - 1
         for i in 1:N
@@ -326,7 +339,7 @@ function _forward!(
             if !isequal(control_seq[t + 1], filled_control)
                 filled_control = control_seq[t + 1]
                 fill_duration_buffers!(
-                    log_dur, log_surv, hsmm, filled_control, max_duration, N
+                    log_dur, log_surv, hsmm, filled_control, max_duration
                 )
             end
             extend_segments!(;
