@@ -287,7 +287,6 @@ end
 
 all_state_seqs(N, T) = (collect(s) for s in Iterators.product(ntuple(_ -> 1:N, T)...))
 
-
 function brute_force_logdensityof(hsmm, obs_seq, control_seq, N)
     T = length(obs_seq)
     return Float64(
@@ -519,6 +518,8 @@ end
             expected = brute_force_logdensityof(hsmm, obs_seq, control_seq, 2)
             @test isfinite(expected)
             @test logdensityof(hsmm, obs_seq) ≈ expected
+            @test forward(hsmm, obs_seq)[1] ≈
+                brute_force_marginals(hsmm, obs_seq, control_seq, 2)
         end
         @test logdensityof(hsmm, [1, 2, 2]) ≈ -1.83258146374831
 
@@ -526,7 +527,6 @@ end
         α, _ = forward(hsmm, [1, 2, 2])
         @test α[:, 1] ≈ [0.0, 1.0]
         @test α[:, 2] ≈ [0.75, 0.25]
-        @test α ≈ brute_force_marginals(hsmm, [1, 2, 2], fill(nothing, 3), 2)
     end
 
     @testset "max_duration" begin
