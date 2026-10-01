@@ -15,7 +15,7 @@ struct HSMMForwardStorage{R}
     α::Matrix{R}
     "one loglikelihood per observation sequence"
     logL::Vector{R}
-    "longest sojourn duration the EM algorithm will consider"
+    "longest sojourn duration considered (longer sojourns are truncated); each sequence uses `min(max_duration, sequence length)`"
     max_duration::Int
     # Internal buffers
     # `log_ends[j,t] = log E[j,t]`, the sojourn in `j` ends at `t`
