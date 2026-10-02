@@ -95,7 +95,7 @@ log_initialization(model::AbstractLatentStateModel) = elementwise_log(initializa
 
 Return the matrix of state transition log-probabilities for `model` (possibly when `control` is applied).
 
-Falls back on `transition_matrix`.
+Falls back on `transition_matrix`, allocating a new matrix on every call. Inference routines such as Viterbi call it at every time step, even for models without control, so override it when this matters.
 
 !!! note
     When processing sequences, the control at time `t` influences the transition from time `t-1` to `t` (since version 0.7 of the package).

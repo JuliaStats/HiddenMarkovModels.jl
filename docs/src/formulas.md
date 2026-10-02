@@ -205,6 +205,89 @@ To sum up,
 \end{align*}
 ```
 
+## Explicit-duration HSMM forward pass
+
+In a hidden semi-Markov model, the sojourn time in each state is given by an explicit duration distribution instead of an implicit geometric one.
+Following [Yu2010](@cite) (see also [Johnson2014](@cite)), we add the following notations:
+
+* the transition matrix has zero diagonal, and $a_{i,j,t}$ now denotes $\mathbb{P}(X_{t+1}=j | X_t=i, \text{the sojourn in } i \text{ ends at } t)$
+* let $p_i(d) = \mathbb{P}(D_i = d)$ be the sojourn duration mass function of state $i$, supported on $d \in \{1, 2, \dots\}$
+* let $S_i(d) = \mathbb{P}(D_i \geq d)$ be the associated survival function
+* let $D$ be a truncation level, encoded by the convention $p_i(d) = S_i(d) = 0$ for $d > D$
+
+A segment entered at time $s$ uses the transition probabilities and sojourn distributions selected by the control $U_s$, i.e., the one in effect at its first timestep.
+In particular, as in the vanilla case, $a_{i,j,t}$ is the transition matrix under $U_{t+1}$, since the jump from $t$ to $t+1$ enters a segment starting at $t+1$.
+
+Observations, on the other hand, use the control at the current timestep; $b_{j,u}$ depends on $U_u$.
+
+### Recursion
+
+The forward pass tracks two variables instead of one:
+
+```math
+\begin{align*}
+E_{j,t} & = \mathbb{P}(Y_{1:t}, X_t=j, \text{the sojourn in } j \text{ ends at } t) \\
+F_{j,t} & = \mathbb{P}(Y_{1:t}, X_t=j, \text{the sojourn in } j \text{ covers } t) = \alpha_{j,t}
+\end{align*}
+```
+
+Only $E$ can be closed under transitions, since a jump requires a completed sojourn, but $F$ is the quantity of interest because the sojourn covering $t$ is right-censored.
+Denoting by
+
+```math
+I_{j,t} = \sum_{i \neq j} E_{i,t} a_{i,j,t}
+```
+
+the mass entering state $j$ at time $t+1$, and decomposing over the starting time $s$ of the sojourn covering $t$, we get
+
+```math
+\begin{align*}
+E_{j,t} & = \pi_j \left(\prod_{u=1}^{t} b_{j,u}\right) p_j(t) + \sum_{s=1}^{t-1} I_{j,s} \left(\prod_{u=s+1}^{t} b_{j,u}\right) p_j(t-s) \\
+F_{j,t} & = \pi_j \left(\prod_{u=1}^{t} b_{j,u}\right) S_j(t) + \sum_{s=1}^{t-1} I_{j,s} \left(\prod_{u=s+1}^{t} b_{j,u}\right) S_j(t-s)
+\end{align*}
+```
+
+where the first term accounts for the segment starting the sequence.
+Unlike the vanilla forward pass, this recursion is carried out in the log domain instead of being scaled.
+Each $F_{j,t}$ mixes segments with different starting times, and hence different products of observation likelihoods, so working with log-probabilities is simpler than tracking scaling factors across all of them.
+
+### Likelihood and marginals
+
+```math
+\begin{align*}
+\mathcal{L} & = \mathbb{P}(Y_{1:T}) = \sum_{j=1}^N F_{j,T} \\
+\bar{\alpha}_{i,t} & = \mathbb{P}(X_t=i | Y_{1:t}) = \frac{F_{i,t}}{\sum_{j=1}^N F_{j,t}}
+\end{align*}
+```
+
+Beware of the notation clash: the forward pass returns the *normalized* filtered marginals $\bar{\alpha}$, and not the unnormalized $\alpha$ of the vanilla section.
+
+### Segment observation likelihoods
+
+Evaluating $\prod_{u=s+1}^{t} b_{j,u}$ naively costs $O(d)$ per segment, so we precompute prefix sums instead.
+Since $b_{j,u} = 0$ would turn their difference into $-\infty - (-\infty)$, zeros are left out of the sum and counted separately:
+
+```math
+\ell_{j,t} = \sum_{u \leq t ~:~ b_{j,u} > 0} \log b_{j,u} \qquad z_{j,t} = \#\{u \leq t : b_{j,u} = 0\}
+```
+
+which brings each segment down to $O(1)$:
+
+```math
+\log \prod_{u=s+1}^{t} b_{j,u} = \begin{cases} \ell_{j,t} - \ell_{j,s} & \text{if } z_{j,t} = z_{j,s} \\ -\infty & \text{otherwise} \end{cases}
+```
+
+### Truncation and complexity
+
+By default, $D$ is the length of the longest sequence, the constraint $d \leq D$ is vacuous and the result is exact.
+For $D < T$, every path containing a completed sojourn longer than $D$ is dropped, so $\mathcal{L}$ is underestimated and the marginals $\bar{\alpha}$ are biased.
+Note that the convention $S_j(d) = 0$ for $d > D$ only stops the enumeration of longer segments: a segment running for $d \leq D$ timesteps still carries the full mass $\mathbb{P}(D_j \geq d)$ of all longer sojourns.
+
+The cost is $O(N^2 T)$ for the transitions plus $O(N T D)$ for the segments, with $O(N T)$ memory.
+With the default $D$, this means $O(N T^2)$, so a smaller $D$ is advisable for long sequences.
+Segments longer than the support of every sojourn distribution are skipped, so bounded supports reduce $D$ automatically.
+The alternative is to augment the state with the remaining sojourn time and reuse the vanilla forward pass on $N D$ states, which shares more code but requires $O(N D T)$ memory.
+
 ## Bibliography
 
 ```@bibliography
