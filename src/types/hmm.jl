@@ -3,6 +3,9 @@ $(TYPEDEF)
 
 Basic implementation of an HMM.
 
+!!! warning
+    Zero entries of a structured or sparse `trans` are only treated as impossible transitions (log-probability `-Inf`) if it is a `SparseMatrixCSC`. Other sparse or structured matrix types may give silently wrong results.
+
 # Fields
 
 $(TYPEDFIELDS)
