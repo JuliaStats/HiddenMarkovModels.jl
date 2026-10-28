@@ -87,6 +87,12 @@ HiddenMarkovModels.initialize_viterbi
 HiddenMarkovModels.viterbi!
 ```
 
+### Viterbi (HSMM)
+
+```@docs
+HiddenMarkovModels.HSMMViterbiStorage
+```
+
 ### Forward-backward
 
 ```@docs

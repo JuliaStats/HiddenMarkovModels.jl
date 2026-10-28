@@ -5,6 +5,7 @@ using HiddenMarkovModels:
     AbstractHSMM,
     HSMMForwardBackwardStorage,
     HSMMForwardStorage,
+    HSMMViterbiStorage,
     duration_distributions,
     duration_logdensityof,
     duration_logsurvival,
@@ -16,9 +17,11 @@ using HiddenMarkovModels:
     forward_backward!,
     initialize_forward,
     initialize_forward_backward,
+    initialize_viterbi,
     log_initialization,
     log_transition_matrix,
-    valid_hsmm
+    valid_hsmm,
+    viterbi!
 using Distributions: Binomial, Categorical, Geometric, Normal
 using FiniteDifferences: FiniteDifferences, central_fdm
 using ForwardDiff: ForwardDiff
@@ -1070,6 +1073,216 @@ end
     end
 end
 
+function brute_force_viterbi(hsmm, obs_seq, control_seq, N; max_duration=length(obs_seq))
+    T = length(obs_seq)
+    best_q, best_logL = zeros(Int, T), -Inf
+    for s in all_state_seqs(N, T)
+        longest_segment(s) <= max_duration || continue
+        logL = joint_logdensityof(hsmm, obs_seq, s, control_seq)
+        if logL > best_logL
+            best_q, best_logL = s, logL
+        end
+    end
+    return best_q, best_logL
+end
+
+# Ensure `@allocated` sees concretely typed arguments.
+function call_viterbi!(storage, hsmm, obs_seq, control_seq, seq_ends)
+    return viterbi!(storage, hsmm, obs_seq, control_seq; seq_ends)
+end
+
+@testset "HSMM Viterbi" begin
+    @testset "Brute-force maximization over all state sequences" begin
+        rng = StableRNG(501)
+        for N in 2:3, T in 5:7
+            hsmm = rand_hsmm(rng, N)
+            obs_seq = randn(rng, T)
+            control_seq = fill(nothing, T)
+            q_bf, logL_bf = brute_force_viterbi(hsmm, obs_seq, control_seq, N)
+            q, logL = viterbi(hsmm, obs_seq)
+            @test q == q_bf
+            @test only(logL) ≈ logL_bf
+            @test only(logL) ≈ joint_logdensityof(hsmm, obs_seq, q)
+        end
+    end
+
+    @testset "Exact equivalence with an HMM under geometric sojourns" begin
+        hmm_init = [0.5, 0.3, 0.2]
+        hmm_trans = [0.7 0.2 0.1; 0.3 0.5 0.2; 0.25 0.25 0.5]
+        hmm_dists = [Normal(0.0), Normal(5.0), Normal(10.0)]
+        hmm = HMM(hmm_init, hmm_trans, hmm_dists)
+
+        N = length(hmm_init)
+        hsmm_trans = [
+            i == j ? 0.0 : hmm_trans[i, j] / (1 - hmm_trans[i, i]) for i in 1:N, j in 1:N
+        ]
+        hsmm_durs = [Geometric(1 - hmm_trans[i, i]) for i in 1:N]
+        hsmm = HSMM(hmm_init, hsmm_trans, hmm_dists, hsmm_durs)
+
+        # A long sequence also checks that the log-domain recursion does not lose precision.
+        for (seed, T) in ((1, 15), (2, 15), (3, 500))
+            obs_seq = rand(StableRNG(seed), hmm, T).obs_seq
+            q_hmm, logL_hmm = viterbi(hmm, obs_seq)
+            q, logL = viterbi(hsmm, obs_seq)
+            @test q == q_hmm
+            @test logL ≈ logL_hmm
+        end
+    end
+
+    @testset "Controlled duration distributions" begin
+        init = [0.6, 0.4]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Normal(0.0, 1.0), Normal(4.0, 1.0)]
+        durs = [[Geometric(0.15), Geometric(0.25)], [Geometric(0.85), Geometric(0.75)]]
+        hsmm = ControlledDurationHSMM(init, trans, dists, durs)
+
+        T = 6
+        obs_seq = 2 .* randn(StableRNG(503), T) .+ 2
+        for control_seq in ([1, 2, 1, 2, 1, 2], [1, 1, 2, 2, 1, 1], [2, 2, 2, 1, 1, 1])
+            q_bf, logL_bf = brute_force_viterbi(hsmm, obs_seq, control_seq, 2)
+            q, logL = viterbi(hsmm, obs_seq, control_seq)
+            @test q == q_bf
+            @test only(logL) ≈ logL_bf
+        end
+    end
+
+    @testset "Sparse transition matrix" begin
+        # Structural zeros must be read as impossible transitions, not as `log(1)`.
+        init = [0.5, 0.3, 0.2]
+        trans = [0.0 0.5 0.5; 1.0 0.0 0.0; 1.0 0.0 0.0]
+        dists = [Normal(0.0), Normal(3.0), Normal(6.0)]
+        durs = [Geometric(0.3) for _ in 1:3]
+        hsmm_dense = HSMM(init, trans, dists, durs)
+        hsmm_sparse = HSMM(init, sparse(trans), dists, durs)
+        # The direct path `2 → 3` is forbidden.
+        obs_seq = [3.0, 3.0, 6.0, 6.0, 0.0, 3.0]
+        T = length(obs_seq)
+        control_seq = fill(nothing, T)
+        q_bf, logL_bf = brute_force_viterbi(hsmm_sparse, obs_seq, control_seq, 3)
+        q, logL = viterbi(hsmm_sparse, obs_seq)
+        @test q == q_bf
+        @test only(logL) ≈ logL_bf
+        @test viterbi(hsmm_dense, obs_seq) == (q, logL)
+
+        storage = initialize_viterbi(hsmm_sparse, obs_seq, control_seq; seq_ends=(T,))
+        seq_ends = (T,)
+        call_viterbi!(storage, hsmm_sparse, obs_seq, control_seq, seq_ends)
+        @test (@allocated call_viterbi!(
+            storage, hsmm_sparse, obs_seq, control_seq, seq_ends
+        )) == 0
+    end
+
+    @testset "Bounded duration support" begin
+        init = [0.6, 0.4]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Normal(0.0), Normal(3.0)]
+        hsmm = HSMM(init, trans, dists, [Binomial(2, 0.4), Binomial(1, 0.7)])
+        rng = StableRNG(504)
+        T = 7
+        obs_seq = 3 .* randn(rng, T)
+        q_bf, logL_bf = brute_force_viterbi(hsmm, obs_seq, fill(nothing, T), 2)
+        for max_duration in 3:T
+            q, logL = viterbi(hsmm, obs_seq; max_duration)
+            @test q == q_bf
+            @test only(logL) ≈ logL_bf
+        end
+    end
+
+    @testset "max_duration" begin
+        rng = StableRNG(505)
+        T = 7
+        for N in 2:3, max_duration in 1:4
+            hsmm = rand_hsmm(rng, N)
+            obs_seq = randn(rng, T)
+            control_seq = fill(nothing, T)
+            q_bf, logL_bf = brute_force_viterbi(hsmm, obs_seq, control_seq, N; max_duration)
+            q, logL = viterbi(hsmm, obs_seq; max_duration)
+            @test q == q_bf
+            @test only(logL) ≈ logL_bf
+            @test longest_segment(q) <= max_duration
+        end
+    end
+
+    @testset "Zero-probability observations" begin
+        init = [0.5, 0.5]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Categorical([0.0, 1.0]), Categorical([0.5, 0.5])]
+        hsmm = HSMM(init, trans, dists, [Geometric(0.4), Geometric(0.6)])
+        for obs_seq in ([1, 2, 2], [2, 1, 2, 2], [2, 2, 1, 2, 2, 2])
+            T = length(obs_seq)
+            q_bf, logL_bf = brute_force_viterbi(hsmm, obs_seq, fill(nothing, T), 2)
+            q, logL = viterbi(hsmm, obs_seq)
+            @test q == q_bf
+            @test only(logL) ≈ logL_bf
+            # State 1 cannot emit observation 1.
+            @test all(q[t] == 2 for t in 1:T if obs_seq[t] == 1)
+        end
+
+        dists = [Categorical([0.7, 0.3]), Categorical([0.2, 0.8])]
+        hsmm = HSMM(init, trans, dists, [Geometric(0.4), Geometric(0.6)])
+        @test_throws ArgumentError viterbi(hsmm, [1, 2, 3])
+    end
+
+    @testset "Multiple sequences of differing lengths" begin
+        rng = StableRNG(506)
+        hsmm = rand_hsmm(rng, 3)
+        lengths = (4, 11, 7, 1, 9, 5, 13)
+        obs_seqs = [randn(rng, T) for T in lengths]
+        obs_seq = reduce(vcat, obs_seqs)
+        seq_ends = cumsum(collect(lengths))
+        q, logL = viterbi(hsmm, obs_seq; seq_ends)
+        for k in eachindex(obs_seqs)
+            t1, t2 = seq_limits(seq_ends, k)
+            q_k, logL_k = viterbi(hsmm, obs_seqs[k]; max_duration=maximum(lengths))
+            @test q[t1:t2] == q_k
+            @test logL[k] ≈ only(logL_k)
+        end
+        # Repeat to expose thread scheduling nondeterminism.
+        for _ in 1:20
+            @test viterbi(hsmm, obs_seq; seq_ends) == (q, logL)
+        end
+    end
+
+    @testset "Empty subsequences" begin
+        hsmm = rand_hsmm(StableRNG(5), 2)
+        obs_seq = randn(StableRNG(6), 5)
+        q, logL = viterbi(hsmm, obs_seq)
+        q_empty, logL_empty = viterbi(hsmm, obs_seq; seq_ends=[0, 5, 5])
+        @test q_empty == q
+        @test logL_empty ≈ [0.0, only(logL), 0.0]
+    end
+
+    @testset "Type promotion" begin
+        hsmm32 = HSMM(
+            Float32[0.6, 0.4],
+            Float32[0.0 1.0; 1.0 0.0],
+            [Normal(0.0f0, 1.0f0), Normal(5.0f0, 1.0f0)],
+            [Geometric(0.4), Geometric(0.6)],
+        )
+        obs_seq = Float32[0.0, 5.0, 0.1, 4.9]
+        control_seq = fill(nothing, length(obs_seq))
+        storage = initialize_viterbi(
+            hsmm32, obs_seq, control_seq; seq_ends=(length(obs_seq),)
+        )
+        @test storage isa HSMMViterbiStorage{Float64}
+        q, logL = viterbi(hsmm32, obs_seq)
+        @test q == [1, 2, 1, 2]
+        @test logL isa Vector{Float64}
+    end
+
+    @testset "Allocations" begin
+        rng = StableRNG(78)
+        T = 30
+        seq_ends = (T,)
+        hsmm = rand_hsmm(rng, 3)
+        obs_seq = rand(rng, hsmm, T).obs_seq
+        control_seq = fill(nothing, T)
+        storage = initialize_viterbi(hsmm, obs_seq, control_seq; seq_ends)
+        call_viterbi!(storage, hsmm, obs_seq, control_seq, seq_ends)  # warm up
+        @test (@allocated call_viterbi!(storage, hsmm, obs_seq, control_seq, seq_ends)) == 0
+    end
+end
+
 @testset "HSMM type stability" begin
     rng = StableRNG(79)
     T = 20
@@ -1095,8 +1308,19 @@ end
     )
     @test_opt target_modules = (HiddenMarkovModels,) forward_backward(hsmm, obs_seq)
     @test_opt target_modules = (HiddenMarkovModels,) logdensityof(hsmm, obs_seq)
+    viterbi_storage = initialize_viterbi(hsmm, obs_seq, control_seq; seq_ends)
+    @test_opt target_modules = (HiddenMarkovModels,) initialize_viterbi(
+        hsmm, obs_seq, control_seq; seq_ends
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) viterbi!(
+        viterbi_storage, hsmm, obs_seq, control_seq; seq_ends
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) viterbi(hsmm, obs_seq)
 
     @test_call target_modules = (HiddenMarkovModels,) forward_backward(
+        hsmm, obs_seq; seq_ends=[5, T]
+    )
+    @test_call target_modules = (HiddenMarkovModels,) viterbi(
         hsmm, obs_seq; seq_ends=[5, T]
     )
 end

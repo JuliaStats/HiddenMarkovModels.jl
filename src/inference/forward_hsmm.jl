@@ -53,6 +53,24 @@ function sequence_max_duration(max_duration::Integer, t1::Integer, t2::Integer)
     return min(max_duration, t2 - t1 + 1)
 end
 
+# Per-sequence scratch space keeps parallel calls independent.
+function sequence_buffers(
+    ::Type{R}, N::Integer, seq_ends::AbstractVectorOrNTuple{Int}, max_duration::Integer
+) where {R}
+    K = length(seq_ends)
+    log_dur = Vector{Matrix{R}}(undef, K)
+    log_surv = Vector{Matrix{R}}(undef, K)
+    incoming = Vector{Vector{R}}(undef, K)
+    for k in 1:K
+        t1, t2 = seq_limits(seq_ends, k)
+        D = sequence_max_duration(max_duration, t1, t2)
+        log_dur[k] = Matrix{R}(undef, D, N)
+        log_surv[k] = Matrix{R}(undef, D, N)
+        incoming[k] = Vector{R}(undef, N)
+    end
+    return log_dur, log_surv, incoming
+end
+
 """
 $(SIGNATURES)
 """
@@ -83,17 +101,7 @@ function initialize_forward(
     cum_log_obs = Matrix{R}(undef, N, T)
     obs_zeros = Matrix{Int}(undef, N, T)
 
-    # Per-sequence scratch space keeps parallel calls independent.
-    log_dur = Vector{Matrix{R}}(undef, K)
-    log_surv = Vector{Matrix{R}}(undef, K)
-    incoming = Vector{Vector{R}}(undef, K)
-    for k in 1:K
-        t1, t2 = seq_limits(seq_ends, k)
-        D = sequence_max_duration(max_duration, t1, t2)
-        log_dur[k] = Matrix{R}(undef, D, N)
-        log_surv[k] = Matrix{R}(undef, D, N)
-        incoming[k] = Vector{R}(undef, N)
-    end
+    log_dur, log_surv, incoming = sequence_buffers(R, N, seq_ends, max_duration)
 
     return HSMMForwardStorage{R}(
         α,
@@ -134,6 +142,40 @@ function fill_duration_buffers!(
         end
     end
     return support
+end
+
+# Keep impossible observations out of the finite prefix sums.
+function cumulate_log_obs!(
+    cum_log_obs::AbstractMatrix{R},
+    obs_zeros::AbstractMatrix{Int},
+    hsmm::AbstractHSMM,
+    obs_seq::AbstractVector,
+    control_seq::AbstractVector,
+    t1::Integer,
+    t2::Integer,
+    N::Integer;
+    error_if_not_finite::Bool,
+) where {R}
+    for t in t1:t2
+        obs_logdensities!(
+            view(cum_log_obs, :, t), hsmm, obs_seq[t], control_seq[t]; error_if_not_finite
+        )
+        for i in 1:N
+            if is_log_zero(cum_log_obs[i, t])
+                cum_log_obs[i, t] = zero(R)
+                obs_zeros[i, t] = 1
+            else
+                obs_zeros[i, t] = 0
+            end
+        end
+    end
+    for t in (t1 + 1):t2
+        for i in 1:N
+            cum_log_obs[i, t] += cum_log_obs[i, t - 1]
+            obs_zeros[i, t] += obs_zeros[i, t - 1]
+        end
+    end
+    return nothing
 end
 
 # A changed zero count means the segment contains an impossible observation.
@@ -294,26 +336,9 @@ function _forward!(
     log_zero = convert(R, -Inf)
     uniform = uniform_controls(control_seq)
 
-    # Keep impossible observations out of the finite prefix sums.
-    for t in t1:t2
-        obs_logdensities!(
-            view(cum_log_obs, :, t), hsmm, obs_seq[t], control_seq[t]; error_if_not_finite
-        )
-        for i in 1:N
-            if is_log_zero(cum_log_obs[i, t])
-                cum_log_obs[i, t] = zero(R)
-                obs_zeros[i, t] = 1
-            else
-                obs_zeros[i, t] = 0
-            end
-        end
-    end
-    for t in (t1 + 1):t2
-        for i in 1:N
-            cum_log_obs[i, t] += cum_log_obs[i, t - 1]
-            obs_zeros[i, t] += obs_zeros[i, t - 1]
-        end
-    end
+    cumulate_log_obs!(
+        cum_log_obs, obs_zeros, hsmm, obs_seq, control_seq, t1, t2, N; error_if_not_finite
+    )
 
     log_init = log_initialization(hsmm)
     @views log_ends[:, t1:t2] .= log_zero
