@@ -22,6 +22,7 @@ using HiddenMarkovModels:
 using Distributions: Binomial, Categorical, Geometric, Normal
 using FiniteDifferences: FiniteDifferences, central_fdm
 using ForwardDiff: ForwardDiff
+using JET: @test_call, @test_opt
 using Random: AbstractRNG
 using SparseArrays: sparse
 using StableRNGs: StableRNG
@@ -749,11 +750,11 @@ end
 
 function brute_force_posteriors(hsmm, obs_seq, control_seq, N; max_duration=length(obs_seq))
     T = length(obs_seq)
-    γ = zeros(N, T)
-    ξ = [zeros(N, N) for _ in 1:(T - 1)]
+    γ = zeros(BigFloat, N, T)
+    ξ = [zeros(BigFloat, N, N) for _ in 1:(T - 1)]
     for s in all_state_seqs(N, T)
         longest_segment(s) <= max_duration || continue
-        p = exp(joint_logdensityof(hsmm, obs_seq, s, control_seq))
+        p = exp(big(joint_logdensityof(hsmm, obs_seq, s, control_seq)))
         for t in 1:T
             γ[s[t], t] += p
         end
@@ -764,7 +765,7 @@ function brute_force_posteriors(hsmm, obs_seq, control_seq, N; max_duration=leng
         end
     end
     Z = sum(γ[:, 1])
-    return γ ./ Z, ξ ./ Z, log(Z)
+    return Float64.(γ ./ Z), [Float64.(ξₜ ./ Z) for ξₜ in ξ], Float64(log(Z))
 end
 
 function full_forward_backward(
@@ -830,7 +831,34 @@ end
             for t in 1:(T - 1)
                 @test storage.ξ[t] ≈ storage_hmm.ξ[t] .* off_diagonal
             end
+
+            γ_hmm, logL_hmm = forward_backward(hmm, obs_seq)
+            γ, logL = forward_backward(hsmm, obs_seq)
+            @test γ ≈ γ_hmm
+            @test logL ≈ logL_hmm
         end
+    end
+
+    @testset "Out-of-place versions agree with the in-place ones" begin
+        rng = StableRNG(406)
+        hsmm = rand_hsmm(rng, 3)
+        lengths = (6, 1, 9)
+        obs_seq = randn(rng, sum(lengths))
+        seq_ends = cumsum(collect(lengths))
+        control_seq = fill(nothing, length(obs_seq))
+        storage = full_forward_backward(hsmm, obs_seq; seq_ends)
+        forward_storage = initialize_forward(hsmm, obs_seq, control_seq; seq_ends)
+        forward!(forward_storage, hsmm, obs_seq, control_seq; seq_ends)
+
+        γ, logL = forward_backward(hsmm, obs_seq; seq_ends)
+        @test γ ≈ storage.γ
+        @test logL ≈ storage.logL
+        α, logL_forward = forward(hsmm, obs_seq; seq_ends)
+        @test α ≈ forward_storage.α
+        @test logL_forward ≈ forward_storage.logL
+        @test logL_forward ≈ logL
+        # Smoothing agrees with filtering at the end of each sequence.
+        @test γ[:, seq_ends] ≈ α[:, seq_ends]
     end
 
     @testset "Marginal consistency" begin
@@ -868,6 +896,10 @@ end
             @test storage.γ ≈ γ_bf
             @test storage.ξ[1:(T - 1)] ≈ ξ_bf
             @test only(storage.logL) ≈ logL_bf
+
+            γ, logL = forward_backward(hsmm, obs_seq, control_seq)
+            @test γ ≈ γ_bf
+            @test only(logL) ≈ logL_bf
         end
     end
 
@@ -886,6 +918,10 @@ end
             @test storage.ξ[1:(T - 1)] ≈ ξ_bf
             @test only(storage.logL) ≈ logL_bf
             @test only(storage.logL) ≈ logdensityof(hsmm, obs_seq; max_duration)
+
+            γ, logL = forward_backward(hsmm, obs_seq; max_duration)
+            @test γ ≈ γ_bf
+            @test only(logL) ≈ logL_bf
         end
     end
 
@@ -901,6 +937,7 @@ end
             @test all(isfinite, storage.γ)
             @test storage.γ ≈ γ_bf
             @test storage.ξ[1:(T - 1)] ≈ ξ_bf
+            @test forward_backward(hsmm, obs_seq)[1] ≈ γ_bf
         end
         γ, _ = forward_backward(hsmm, [1, 2, 2])
         @test γ[:, 1] ≈ [0.0, 1.0]
@@ -977,4 +1014,35 @@ end
             storage, hsmm, obs_seq, control_seq, seq_ends
         )) == 0
     end
+end
+
+@testset "HSMM type stability" begin
+    rng = StableRNG(79)
+    T = 20
+    hsmm = rand_hsmm(rng, 3)
+    obs_seq = rand(rng, hsmm, T).obs_seq
+    control_seq = fill(nothing, T)
+    seq_ends = (T,)
+    forward_storage = initialize_forward(hsmm, obs_seq, control_seq; seq_ends)
+    storage = initialize_forward_backward(hsmm, obs_seq, control_seq; seq_ends)
+
+    @test_opt target_modules = (HiddenMarkovModels,) initialize_forward(
+        hsmm, obs_seq, control_seq; seq_ends
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) forward!(
+        forward_storage, hsmm, obs_seq, control_seq; seq_ends
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) forward(hsmm, obs_seq)
+    @test_opt target_modules = (HiddenMarkovModels,) initialize_forward_backward(
+        hsmm, obs_seq, control_seq; seq_ends
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) forward_backward!(
+        storage, hsmm, obs_seq, control_seq; seq_ends
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) forward_backward(hsmm, obs_seq)
+    @test_opt target_modules = (HiddenMarkovModels,) logdensityof(hsmm, obs_seq)
+
+    @test_call target_modules = (HiddenMarkovModels,) forward_backward(
+        hsmm, obs_seq; seq_ends=[5, T]
+    )
 end

@@ -16,9 +16,15 @@ struct HSMMForwardBackwardStorage{R,M<:AbstractMatrix{R}}
     logL::Vector{R}
     "storage of the forward pass, whose filtered marginals `forward.α` remain available"
     forward::HSMMForwardStorage{R}
+    # Internal buffers
+    # `log_starts[j,t] = log ℙ(Y[1:t-1], a sojourn in j starts at t)`
     log_starts::Matrix{R}
+    # `log_after_end[j,t] = log ℙ(Y[t+1:T] | a sojourn in j ends at t)`
     log_after_end::Matrix{R}
+    # `log_from_start[j,t] = log ℙ(Y[t:T] | a sojourn in j starts at t)`
     log_from_start::Matrix{R}
+    # `seg_weights[k][d]`: posterior weight of the sojourn in the current state lasting `d`
+    # steps from the current start, for sequence `k`
     seg_weights::Vector{Vector{R}}
 end
 
@@ -45,7 +51,7 @@ function initialize_forward_backward(
         for t in 1:(T - 1)
             ξ[t] = similar(transition_matrix(hsmm, control_seq[t + 1]), R)
         end
-        ξ[T] = zero(trans)  # not used
+        ξ[T] = zero(similar(trans, R))  # not used
     end
 
     # Mass entering each state at `t`, and the likelihood of the observations after `t` given
