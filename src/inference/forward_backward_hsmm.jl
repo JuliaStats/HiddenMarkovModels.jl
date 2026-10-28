@@ -71,6 +71,16 @@ function initialize_forward_backward(
     )
 end
 
+# Longest duration with nonzero survival for some state, as returned by `fill_duration_buffers!`.
+function duration_support(log_surv::AbstractMatrix, max_duration::Integer)
+    for d in max_duration:-1:1
+        for i in axes(log_surv, 2)
+            is_log_zero(log_surv[d, i]) || return d
+        end
+    end
+    return 0
+end
+
 #=
 Fill `log_from_start[:, s]` and add the posterior weights of every segment starting at `s` to `γ`.
 Summing the weights over durations from the longest down gives the mass of the segments still
@@ -150,6 +160,30 @@ function propagate_backward!(
     return nothing
 end
 
+# A structural zero would read as `log(1)`, see the sparse `accumulate_incoming!`.
+function propagate_backward!(
+    log_after_end::AbstractMatrix{R},
+    log_from_start::AbstractMatrix{R},
+    log_trans::SparseMatrixCSC,
+    t::Integer,
+    N::Integer,
+    log_zero::R,
+) where {R}
+    rows, vals = rowvals(log_trans), nonzeros(log_trans)
+    @views log_after_end[:, t] .= log_zero
+    for j in 1:N
+        for p in nzrange(log_trans, j)
+            i = rows[p]
+            if i != j
+                log_after_end[i, t] = logaddexp_safe(
+                    log_after_end[i, t], vals[p] + log_from_start[j, t + 1]
+                )
+            end
+        end
+    end
+    return nothing
+end
+
 function transition_marginals!(
     ξₜ::AbstractMatrix{R},
     log_ends::AbstractMatrix{R},
@@ -162,6 +196,31 @@ function transition_marginals!(
     for j in 1:N, i in 1:N
         log_ξ = log_ends[i, t] + log_trans[i, j] + log_from_start[j, t + 1]
         ξₜ[i, j] = (i == j || is_log_zero(log_ξ)) ? zero(R) : exp(log_ξ - logL)
+    end
+    return nothing
+end
+
+#= Only the stored entries of `log_trans` can carry mass. `ξₜ` shares their sparsity pattern, so
+writing them in place does not allocate. =#
+function transition_marginals!(
+    ξₜ::SparseMatrixCSC{R},
+    log_ends::AbstractMatrix{R},
+    log_from_start::AbstractMatrix{R},
+    log_trans::SparseMatrixCSC,
+    t::Integer,
+    N::Integer,
+    logL::R,
+) where {R}
+    rows, vals = rowvals(log_trans), nonzeros(log_trans)
+    fill!(nonzeros(ξₜ), zero(R))
+    for j in 1:N
+        for p in nzrange(log_trans, j)
+            i = rows[p]
+            log_ξ = log_ends[i, t] + vals[p] + log_from_start[j, t + 1]
+            if i != j && !is_log_zero(log_ξ)
+                ξₜ[i, j] = exp(log_ξ - logL)
+            end
+        end
     end
     return nothing
 end
@@ -198,13 +257,22 @@ function _forward_backward!(
 
     # With uniform controls, the forward pass left the duration buffers filled for `control_seq[t1]`.
     filled_control = control_seq[t1]
+    support = duration_support(log_surv, max_duration)
+    # Rebuilding the transitions costs `N^2` evaluations, so skip repeated controls.
+    trans_control = uniform ? control_seq[t1] : control_seq[t2]
+    log_trans = log_transition_matrix(hsmm, trans_control)
     for s in t2:-1:t1
         if !uniform && (s == t2 || !isequal(control_seq[s], filled_control))
             filled_control = control_seq[s]
-            fill_duration_buffers!(log_dur, log_surv, hsmm, filled_control, max_duration)
+            support = fill_duration_buffers!(
+                log_dur, log_surv, hsmm, filled_control, max_duration
+            )
         end
         # The control at time `s` drives the transition into time `s`.
-        log_trans = log_transition_matrix(hsmm, uniform ? control_seq[t1] : control_seq[s])
+        if !uniform && s > t1 && !isequal(control_seq[s], trans_control)
+            trans_control = control_seq[s]
+            log_trans = log_transition_matrix(hsmm, trans_control)
+        end
         if s == t1
             copyto!(view(log_starts, :, s), log_init)
         else
@@ -226,7 +294,7 @@ function _forward_backward!(
             t1,
             t2,
             N,
-            max_duration,
+            max_duration=support,
             logL=logL[k],
             log_zero,
         )

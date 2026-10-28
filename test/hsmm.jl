@@ -24,7 +24,7 @@ using FiniteDifferences: FiniteDifferences, central_fdm
 using ForwardDiff: ForwardDiff
 using JET: @test_call, @test_opt
 using Random: AbstractRNG
-using SparseArrays: sparse
+using SparseArrays: SparseMatrixCSC, nnz, sparse
 using StableRNGs: StableRNG
 using Test
 
@@ -900,6 +900,60 @@ end
             γ, logL = forward_backward(hsmm, obs_seq, control_seq)
             @test γ ≈ γ_bf
             @test only(logL) ≈ logL_bf
+        end
+    end
+
+    @testset "Sparse transition matrix" begin
+        # Structural zeros must be read as impossible transitions, not as `log(1)`.
+        init = [0.5, 0.3, 0.2]
+        trans = [0.0 0.5 0.5; 1.0 0.0 0.0; 1.0 0.0 0.0]
+        dists = [Normal(0.0), Normal(3.0), Normal(6.0)]
+        durs = [Geometric(0.3) for _ in 1:3]
+        hsmm_dense = HSMM(init, trans, dists, durs)
+        hsmm_sparse = HSMM(init, sparse(trans), dists, durs)
+        rng = StableRNG(407)
+        T = 6
+        obs_seq = 3 .* randn(rng, T)
+        control_seq = fill(nothing, T)
+        γ_bf, ξ_bf, logL_bf = brute_force_posteriors(hsmm_sparse, obs_seq, control_seq, 3)
+        storage_dense = full_forward_backward(hsmm_dense, obs_seq; seq_ends=(T,))
+        storage = full_forward_backward(hsmm_sparse, obs_seq; seq_ends=(T,))
+        @test storage.γ ≈ γ_bf
+        @test storage.γ ≈ storage_dense.γ
+        @test storage.ξ[1:(T - 1)] ≈ ξ_bf
+        @test only(storage.logL) ≈ logL_bf
+        for t in 1:(T - 1)
+            # The forbidden transitions keep their structural zeros.
+            @test storage.ξ[t] isa SparseMatrixCSC
+            @test nnz(storage.ξ[t]) == nnz(sparse(trans))
+            @test storage.ξ[t] ≈ storage_dense.ξ[t]
+        end
+        @test forward_backward(hsmm_sparse, obs_seq)[1] ≈ γ_bf
+
+        seq_ends = (T,)
+        call_forward_backward!(storage, hsmm_sparse, obs_seq, control_seq, seq_ends)
+        @test (@allocated call_forward_backward!(
+            storage, hsmm_sparse, obs_seq, control_seq, seq_ends
+        )) == 0
+    end
+
+    @testset "Bounded duration support" begin
+        # Sojourns last at most 3 timesteps, so longer segments are skipped.
+        init = [0.6, 0.4]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Normal(0.0), Normal(3.0)]
+        hsmm = HSMM(init, trans, dists, [Binomial(2, 0.4), Binomial(1, 0.7)])
+        rng = StableRNG(408)
+        T = 7
+        obs_seq = 3 .* randn(rng, T)
+        control_seq = fill(nothing, T)
+        γ_bf, ξ_bf, logL_bf = brute_force_posteriors(hsmm, obs_seq, control_seq, 2)
+        storage = full_forward_backward(hsmm, obs_seq; seq_ends=(T,))
+        @test storage.γ ≈ γ_bf
+        @test storage.ξ[1:(T - 1)] ≈ ξ_bf
+        @test only(storage.logL) ≈ logL_bf
+        for max_duration in 3:T
+            @test forward_backward(hsmm, obs_seq; max_duration)[1] ≈ γ_bf
         end
     end
 
