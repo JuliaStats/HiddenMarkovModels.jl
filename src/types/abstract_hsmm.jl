@@ -25,6 +25,7 @@ Any `AbstractHSMM` which satisfies the interface can be given to the following f
 - [`logdensityof`](@ref)
 - [`joint_logdensityof`](@ref)
 - [`forward`](@ref)
+- [`forward_backward`](@ref)
 
 """
 abstract type AbstractHSMM <: AbstractLatentStateModel end

@@ -3,6 +3,7 @@ using HiddenMarkovModels
 using HiddenMarkovModels:
     AbstractLatentStateModel,
     AbstractHSMM,
+    HSMMForwardBackwardStorage,
     HSMMForwardStorage,
     duration_distributions,
     duration_logdensityof,
@@ -12,15 +13,18 @@ using HiddenMarkovModels:
     Fill,
     StateSegments,
     forward!,
+    forward_backward!,
     initialize_forward,
+    initialize_forward_backward,
     log_initialization,
     log_transition_matrix,
     valid_hsmm
 using Distributions: Binomial, Categorical, Geometric, Normal
 using FiniteDifferences: FiniteDifferences, central_fdm
 using ForwardDiff: ForwardDiff
+using JET: @test_call, @test_opt
 using Random: AbstractRNG
-using SparseArrays: sparse
+using SparseArrays: SparseMatrixCSC, nnz, sparse
 using StableRNGs: StableRNG
 using Test
 
@@ -735,4 +739,364 @@ end
         call_forward!(storage, hsmm, obs_seq, control_seq, seq_ends)  # warm up
         @test (@allocated call_forward!(storage, hsmm, obs_seq, control_seq, seq_ends)) == 0
     end
+end
+
+function longest_segment(state_seq)
+    return maximum(
+        t_end - t_start + 1 for
+        (t_start, t_end) in StateSegments(state_seq, 1, length(state_seq))
+    )
+end
+
+function brute_force_posteriors(hsmm, obs_seq, control_seq, N; max_duration=length(obs_seq))
+    T = length(obs_seq)
+    γ = zeros(BigFloat, N, T)
+    ξ = [zeros(BigFloat, N, N) for _ in 1:(T - 1)]
+    for s in all_state_seqs(N, T)
+        longest_segment(s) <= max_duration || continue
+        p = exp(big(joint_logdensityof(hsmm, obs_seq, s, control_seq)))
+        for t in 1:T
+            γ[s[t], t] += p
+        end
+        for t in 1:(T - 1)
+            if s[t] != s[t + 1]
+                ξ[t][s[t], s[t + 1]] += p
+            end
+        end
+    end
+    Z = sum(γ[:, 1])
+    return Float64.(γ ./ Z), [Float64.(ξₜ ./ Z) for ξₜ in ξ], Float64(log(Z))
+end
+
+function full_forward_backward(
+    hsmm, obs_seq, control_seq=fill(nothing, length(obs_seq)); kwargs...
+)
+    seq_ends = get(kwargs, :seq_ends, (length(obs_seq),))
+    storage = initialize_forward_backward(hsmm, obs_seq, control_seq; kwargs...)
+    forward_backward!(storage, hsmm, obs_seq, control_seq; seq_ends)
+    return storage
+end
+
+# Ensure `@allocated` sees concretely typed arguments.
+function call_forward_backward!(storage, hsmm, obs_seq, control_seq, seq_ends)
+    return forward_backward!(storage, hsmm, obs_seq, control_seq; seq_ends)
+end
+
+@testset "HSMM forward-backward" begin
+    @testset "Brute-force marginalization over all state sequences" begin
+        rng = StableRNG(401)
+        for N in 2:3, T in 5:7
+            hsmm = rand_hsmm(rng, N)
+            obs_seq = randn(rng, T)
+            control_seq = fill(nothing, T)
+            γ_bf, ξ_bf, logL_bf = brute_force_posteriors(hsmm, obs_seq, control_seq, N)
+            storage = full_forward_backward(hsmm, obs_seq; seq_ends=(T,))
+            @test storage.γ ≈ γ_bf
+            @test storage.ξ[1:(T - 1)] ≈ ξ_bf
+            @test iszero(storage.ξ[T])
+            @test only(storage.logL) ≈ logL_bf
+
+            γ, logL = forward_backward(hsmm, obs_seq)
+            @test γ ≈ γ_bf
+            @test logL ≈ storage.logL
+        end
+    end
+
+    @testset "Exact equivalence with an HMM under geometric sojourns" begin
+        hmm_init = [0.5, 0.3, 0.2]
+        hmm_trans = [0.7 0.2 0.1; 0.3 0.5 0.2; 0.25 0.25 0.5]
+        hmm_dists = [Normal(0.0), Normal(5.0), Normal(10.0)]
+        hmm = HMM(hmm_init, hmm_trans, hmm_dists)
+
+        N = length(hmm_init)
+        hsmm_trans = [
+            i == j ? 0.0 : hmm_trans[i, j] / (1 - hmm_trans[i, i]) for i in 1:N, j in 1:N
+        ]
+        hsmm_durs = [Geometric(1 - hmm_trans[i, i]) for i in 1:N]
+        hsmm = HSMM(hmm_init, hsmm_trans, hmm_dists, hsmm_durs)
+
+        # A long sequence also checks that the log-domain recursion does not lose precision.
+        for (seed, T) in ((1, 15), (2, 15), (3, 500))
+            obs_seq = rand(StableRNG(seed), hmm, T).obs_seq
+            control_seq = fill(nothing, T)
+            storage_hmm = initialize_forward_backward(
+                hmm, obs_seq, control_seq; seq_ends=(T,)
+            )
+            forward_backward!(storage_hmm, hmm, obs_seq, control_seq; seq_ends=(T,))
+            storage = full_forward_backward(hsmm, obs_seq; seq_ends=(T,))
+            @test storage.γ ≈ storage_hmm.γ
+            @test storage.logL ≈ storage_hmm.logL
+            # The HMM self-transitions are the continued sojourns of the HSMM.
+            off_diagonal = [i != j for i in 1:N, j in 1:N]
+            for t in 1:(T - 1)
+                @test storage.ξ[t] ≈ storage_hmm.ξ[t] .* off_diagonal
+            end
+
+            γ_hmm, logL_hmm = forward_backward(hmm, obs_seq)
+            γ, logL = forward_backward(hsmm, obs_seq)
+            @test γ ≈ γ_hmm
+            @test logL ≈ logL_hmm
+        end
+    end
+
+    @testset "Out-of-place versions agree with the in-place ones" begin
+        rng = StableRNG(406)
+        hsmm = rand_hsmm(rng, 3)
+        lengths = (6, 1, 9)
+        obs_seq = randn(rng, sum(lengths))
+        seq_ends = cumsum(collect(lengths))
+        control_seq = fill(nothing, length(obs_seq))
+        storage = full_forward_backward(hsmm, obs_seq; seq_ends)
+        forward_storage = initialize_forward(hsmm, obs_seq, control_seq; seq_ends)
+        forward!(forward_storage, hsmm, obs_seq, control_seq; seq_ends)
+
+        γ, logL = forward_backward(hsmm, obs_seq; seq_ends)
+        @test γ ≈ storage.γ
+        @test logL ≈ storage.logL
+        α, logL_forward = forward(hsmm, obs_seq; seq_ends)
+        @test α ≈ forward_storage.α
+        @test logL_forward ≈ forward_storage.logL
+        @test logL_forward ≈ logL
+        # Smoothing agrees with filtering at the end of each sequence.
+        @test γ[:, seq_ends] ≈ α[:, seq_ends]
+    end
+
+    @testset "Marginal consistency" begin
+        rng = StableRNG(402)
+        hsmm = rand_hsmm(rng, 3)
+        T = 40
+        obs_seq = rand(rng, hsmm, T).obs_seq
+        storage = full_forward_backward(hsmm, obs_seq; seq_ends=(T,))
+        (; γ, ξ) = storage
+        @test all(>=(0), γ)
+        for t in 1:T
+            @test sum(γ[:, t]) ≈ 1
+        end
+        # The mass of a state changes only through segment boundaries.
+        for t in 1:(T - 1)
+            @test γ[:, t + 1] - γ[:, t] ≈ vec(sum(ξ[t]; dims=1)) - vec(sum(ξ[t]; dims=2)) atol =
+                1e-12
+        end
+        # Smoothing agrees with filtering at the last timestep.
+        @test γ[:, T] ≈ storage.forward.α[:, T]
+    end
+
+    @testset "Controlled duration distributions" begin
+        init = [0.6, 0.4]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Normal(0.0, 1.0), Normal(4.0, 1.0)]
+        durs = [[Geometric(0.15), Geometric(0.25)], [Geometric(0.85), Geometric(0.75)]]
+        hsmm = ControlledDurationHSMM(init, trans, dists, durs)
+
+        T = 6
+        obs_seq = randn(StableRNG(403), T)
+        for control_seq in ([1, 2, 1, 2, 1, 2], [1, 1, 2, 2, 1, 1], [2, 2, 2, 1, 1, 1])
+            γ_bf, ξ_bf, logL_bf = brute_force_posteriors(hsmm, obs_seq, control_seq, 2)
+            storage = full_forward_backward(hsmm, obs_seq, control_seq; seq_ends=(T,))
+            @test storage.γ ≈ γ_bf
+            @test storage.ξ[1:(T - 1)] ≈ ξ_bf
+            @test only(storage.logL) ≈ logL_bf
+
+            γ, logL = forward_backward(hsmm, obs_seq, control_seq)
+            @test γ ≈ γ_bf
+            @test only(logL) ≈ logL_bf
+        end
+    end
+
+    @testset "Sparse transition matrix" begin
+        # Structural zeros must be read as impossible transitions, not as `log(1)`.
+        init = [0.5, 0.3, 0.2]
+        trans = [0.0 0.5 0.5; 1.0 0.0 0.0; 1.0 0.0 0.0]
+        dists = [Normal(0.0), Normal(3.0), Normal(6.0)]
+        durs = [Geometric(0.3) for _ in 1:3]
+        hsmm_dense = HSMM(init, trans, dists, durs)
+        hsmm_sparse = HSMM(init, sparse(trans), dists, durs)
+        rng = StableRNG(407)
+        T = 6
+        obs_seq = 3 .* randn(rng, T)
+        control_seq = fill(nothing, T)
+        γ_bf, ξ_bf, logL_bf = brute_force_posteriors(hsmm_sparse, obs_seq, control_seq, 3)
+        storage_dense = full_forward_backward(hsmm_dense, obs_seq; seq_ends=(T,))
+        storage = full_forward_backward(hsmm_sparse, obs_seq; seq_ends=(T,))
+        @test storage.γ ≈ γ_bf
+        @test storage.γ ≈ storage_dense.γ
+        @test storage.ξ[1:(T - 1)] ≈ ξ_bf
+        @test only(storage.logL) ≈ logL_bf
+        for t in 1:(T - 1)
+            # The forbidden transitions keep their structural zeros.
+            @test storage.ξ[t] isa SparseMatrixCSC
+            @test nnz(storage.ξ[t]) == nnz(sparse(trans))
+            @test storage.ξ[t] ≈ storage_dense.ξ[t]
+        end
+        @test forward_backward(hsmm_sparse, obs_seq)[1] ≈ γ_bf
+
+        seq_ends = (T,)
+        call_forward_backward!(storage, hsmm_sparse, obs_seq, control_seq, seq_ends)
+        @test (@allocated call_forward_backward!(
+            storage, hsmm_sparse, obs_seq, control_seq, seq_ends
+        )) == 0
+    end
+
+    @testset "Bounded duration support" begin
+        # Sojourns last at most 3 timesteps, so longer segments are skipped.
+        init = [0.6, 0.4]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Normal(0.0), Normal(3.0)]
+        hsmm = HSMM(init, trans, dists, [Binomial(2, 0.4), Binomial(1, 0.7)])
+        rng = StableRNG(408)
+        T = 7
+        obs_seq = 3 .* randn(rng, T)
+        control_seq = fill(nothing, T)
+        γ_bf, ξ_bf, logL_bf = brute_force_posteriors(hsmm, obs_seq, control_seq, 2)
+        storage = full_forward_backward(hsmm, obs_seq; seq_ends=(T,))
+        @test storage.γ ≈ γ_bf
+        @test storage.ξ[1:(T - 1)] ≈ ξ_bf
+        @test only(storage.logL) ≈ logL_bf
+        for max_duration in 3:T
+            @test forward_backward(hsmm, obs_seq; max_duration)[1] ≈ γ_bf
+        end
+    end
+
+    @testset "max_duration" begin
+        rng = StableRNG(404)
+        T = 7
+        for N in 2:3, max_duration in 1:4
+            hsmm = rand_hsmm(rng, N)
+            obs_seq = randn(rng, T)
+            control_seq = fill(nothing, T)
+            γ_bf, ξ_bf, logL_bf = brute_force_posteriors(
+                hsmm, obs_seq, control_seq, N; max_duration
+            )
+            storage = full_forward_backward(hsmm, obs_seq; seq_ends=(T,), max_duration)
+            @test storage.γ ≈ γ_bf
+            @test storage.ξ[1:(T - 1)] ≈ ξ_bf
+            @test only(storage.logL) ≈ logL_bf
+            @test only(storage.logL) ≈ logdensityof(hsmm, obs_seq; max_duration)
+
+            γ, logL = forward_backward(hsmm, obs_seq; max_duration)
+            @test γ ≈ γ_bf
+            @test only(logL) ≈ logL_bf
+        end
+    end
+
+    @testset "Zero-probability observation before the last timestep" begin
+        init = [0.5, 0.5]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Categorical([0.0, 1.0]), Categorical([0.5, 0.5])]
+        hsmm = HSMM(init, trans, dists, [Geometric(0.4), Geometric(0.6)])
+        for obs_seq in ([1, 2, 2], [2, 1, 2, 2], [2, 2, 1, 2, 2, 2])
+            T = length(obs_seq)
+            γ_bf, ξ_bf, _ = brute_force_posteriors(hsmm, obs_seq, fill(nothing, T), 2)
+            storage = full_forward_backward(hsmm, obs_seq; seq_ends=(T,))
+            @test all(isfinite, storage.γ)
+            @test storage.γ ≈ γ_bf
+            @test storage.ξ[1:(T - 1)] ≈ ξ_bf
+            @test forward_backward(hsmm, obs_seq)[1] ≈ γ_bf
+        end
+        γ, _ = forward_backward(hsmm, [1, 2, 2])
+        @test γ[:, 1] ≈ [0.0, 1.0]
+    end
+
+    @testset "Multiple sequences of differing lengths" begin
+        rng = StableRNG(405)
+        hsmm = rand_hsmm(rng, 3)
+        lengths = (4, 11, 7, 1, 9, 5, 13)
+        obs_seqs = [randn(rng, T) for T in lengths]
+        obs_seq = reduce(vcat, obs_seqs)
+        seq_ends = cumsum(collect(lengths))
+        storage = full_forward_backward(hsmm, obs_seq; seq_ends)
+        for k in eachindex(obs_seqs)
+            t1, t2 = seq_limits(seq_ends, k)
+            separate = full_forward_backward(
+                hsmm, obs_seqs[k]; seq_ends=(lengths[k],), max_duration=maximum(lengths)
+            )
+            @test storage.γ[:, t1:t2] ≈ separate.γ
+            @test storage.ξ[t1:t2] ≈ separate.ξ
+            @test storage.logL[k] ≈ only(separate.logL)
+        end
+        # Repeat to expose thread scheduling nondeterminism.
+        for _ in 1:20
+            γ, _ = forward_backward(hsmm, obs_seq; seq_ends)
+            @test γ == storage.γ
+        end
+    end
+
+    @testset "Empty subsequences" begin
+        hsmm = rand_hsmm(StableRNG(5), 2)
+        obs_seq = randn(StableRNG(6), 5)
+        γ, logL = forward_backward(hsmm, obs_seq)
+        γ_empty, logL_empty = forward_backward(hsmm, obs_seq; seq_ends=[0, 5, 5])
+        @test γ_empty ≈ γ
+        @test logL_empty ≈ [0.0, only(logL), 0.0]
+    end
+
+    @testset "Type promotion" begin
+        hsmm32 = HSMM(
+            Float32[0.6, 0.4],
+            Float32[0.0 1.0; 1.0 0.0],
+            [Normal(0.0f0, 1.0f0), Normal(5.0f0, 1.0f0)],
+            [Geometric(0.4), Geometric(0.6)],
+        )
+        obs_seq = Float32[0.0, 5.0, 0.1, 4.9]
+        control_seq = fill(nothing, length(obs_seq))
+        storage = initialize_forward_backward(
+            hsmm32, obs_seq, control_seq; seq_ends=(length(obs_seq),)
+        )
+        @test storage isa HSMMForwardBackwardStorage{Float64}
+        @test eltype(storage.ξ) == Matrix{Float64}
+        @test forward_backward(hsmm32, obs_seq)[1] isa Matrix{Float64}
+    end
+
+    @testset "error_if_not_finite" begin
+        init = [0.6, 0.4]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Categorical([0.7, 0.3]), Categorical([0.2, 0.8])]
+        hsmm = HSMM(init, trans, dists, [Geometric(0.4), Geometric(0.6)])
+        @test_throws ArgumentError forward_backward(hsmm, [1, 2, 3])
+    end
+
+    @testset "Allocations" begin
+        rng = StableRNG(78)
+        T = 30
+        seq_ends = (T,)
+        hsmm = rand_hsmm(rng, 3)
+        obs_seq = rand(rng, hsmm, T).obs_seq
+        control_seq = fill(nothing, T)
+        storage = initialize_forward_backward(hsmm, obs_seq, control_seq; seq_ends)
+        call_forward_backward!(storage, hsmm, obs_seq, control_seq, seq_ends)  # warm up
+        @test (@allocated call_forward_backward!(
+            storage, hsmm, obs_seq, control_seq, seq_ends
+        )) == 0
+    end
+end
+
+@testset "HSMM type stability" begin
+    rng = StableRNG(79)
+    T = 20
+    hsmm = rand_hsmm(rng, 3)
+    obs_seq = rand(rng, hsmm, T).obs_seq
+    control_seq = fill(nothing, T)
+    seq_ends = (T,)
+    forward_storage = initialize_forward(hsmm, obs_seq, control_seq; seq_ends)
+    storage = initialize_forward_backward(hsmm, obs_seq, control_seq; seq_ends)
+
+    @test_opt target_modules = (HiddenMarkovModels,) initialize_forward(
+        hsmm, obs_seq, control_seq; seq_ends
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) forward!(
+        forward_storage, hsmm, obs_seq, control_seq; seq_ends
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) forward(hsmm, obs_seq)
+    @test_opt target_modules = (HiddenMarkovModels,) initialize_forward_backward(
+        hsmm, obs_seq, control_seq; seq_ends
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) forward_backward!(
+        storage, hsmm, obs_seq, control_seq; seq_ends
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) forward_backward(hsmm, obs_seq)
+    @test_opt target_modules = (HiddenMarkovModels,) logdensityof(hsmm, obs_seq)
+
+    @test_call target_modules = (HiddenMarkovModels,) forward_backward(
+        hsmm, obs_seq; seq_ends=[5, T]
+    )
 end
