@@ -61,7 +61,10 @@ function initialize_forward_backward(
     log_from_start = Matrix{R}(undef, N, T)
 
     # Posterior weights of the segments sharing a start, one entry per duration.
-    seg_weights = [Vector{R}(undef, size(forward.log_dur[k], 1)) for k in 1:K]
+    seg_weights = Vector{Vector{R}}(undef, K)
+    for k in 1:K
+        seg_weights[k] = Vector{R}(undef, size(forward.log_dur[k], 1))
+    end
 
     return HSMMForwardBackwardStorage{R,M}(
         γ, ξ, forward.logL, forward, log_starts, log_after_end, log_from_start, seg_weights
