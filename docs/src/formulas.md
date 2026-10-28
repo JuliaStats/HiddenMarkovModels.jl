@@ -338,6 +338,26 @@ The identity still holds and serves as a consistency check.
 
 Everything is computed during a single backward sweep over $s$, in the log domain: when the sweep reaches $s$, the variables $G_{\cdot, s:T}$ are already known, so $H_{\cdot, s}$, the weights $w_{\cdot,s,\cdot}$ and then $G_{\cdot, s-1}$ and $\xi_{\cdot,\cdot,s-1}$ follow.
 
+## Explicit-duration HSMM Viterbi
+
+The Viterbi algorithm replaces the sums of the forward pass with maximizations.
+Since consecutive sojourns are in different states, a sequence of segments determines the state sequence and vice versa, so maximizing over segmentations maximizes the joint likelihood $\mathbb{P}(X_{1:T}, Y_{1:T})$, in which the final segment is right-censored.
+
+### Recursion
+
+With the convention $I^*_{j,0} = \pi_j$, as in the forward-backward marginals, the best path whose sojourn in $j$ ends at $t$, and the best path entering $j$ at $t+1$, satisfy
+
+```math
+\begin{align*}
+E^*_{j,t} & = \max_{1 \leq s \leq t} I^*_{j,s-1} \left(\prod_{u=s}^{t} b_{j,u}\right) \times \begin{cases} p_j(t-s+1) & \text{if } t < T \\ S_j(T-s+1) & \text{if } t = T \end{cases} \\
+I^*_{j,t} & = \max_{i \neq j} E^*_{i,t} a_{i,j,t}
+\end{align*}
+```
+
+The joint loglikelihood of the most likely state sequence is $\log \max_j E^*_{j,T}$.
+Storing the maximizing duration $t-s+1$ for each $E^*_{j,t}$ and the maximizing state $i$ for each $I^*_{j,t}$ is enough to backtrack, one segment at a time, from the best final state.
+As in the forward pass, the recursion is carried out in the log domain, with the same segment observation likelihoods, truncation and complexity.
+
 ## Bibliography
 
 ```@bibliography
