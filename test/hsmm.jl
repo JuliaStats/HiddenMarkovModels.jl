@@ -294,6 +294,54 @@ function HiddenMarkovModels.duration_distributions(
     return hsmm.durs[control]
 end
 
+# Every component depends on the control, so using the wrong control changes the results.
+struct FullyControlledHSMM <: AbstractHSMM
+    init::Vector{Float64}
+    trans::Vector{Matrix{Float64}}
+    dists::Vector{Vector{Normal{Float64}}}
+    durs::Vector{Vector{Geometric{Float64}}}
+end
+
+HiddenMarkovModels.initialization(hsmm::FullyControlledHSMM) = hsmm.init
+HiddenMarkovModels.transition_matrix(hsmm::FullyControlledHSMM) = hsmm.trans[1]
+function HiddenMarkovModels.transition_matrix(hsmm::FullyControlledHSMM, control::Integer)
+    return hsmm.trans[control]
+end
+HiddenMarkovModels.obs_distributions(hsmm::FullyControlledHSMM) = hsmm.dists[1]
+function HiddenMarkovModels.obs_distributions(hsmm::FullyControlledHSMM, control::Integer)
+    return hsmm.dists[control]
+end
+HiddenMarkovModels.duration_distributions(hsmm::FullyControlledHSMM) = hsmm.durs[1]
+function HiddenMarkovModels.duration_distributions(
+    hsmm::FullyControlledHSMM, control::Integer
+)
+    return hsmm.durs[control]
+end
+
+function fully_controlled_hsmm()
+    init = [0.5, 0.3, 0.2]
+    trans = [
+        [0.0 0.9 0.1; 0.2 0.0 0.8; 0.6 0.4 0.0], [0.0 0.1 0.9; 0.8 0.0 0.2; 0.3 0.7 0.0]
+    ]
+    dists = [
+        [Normal(0.0), Normal(2.0), Normal(4.0)], [Normal(4.0), Normal(0.0), Normal(2.0)]
+    ]
+    durs = [
+        [Geometric(0.2), Geometric(0.5), Geometric(0.8)],
+        [Geometric(0.7), Geometric(0.3), Geometric(0.4)],
+    ]
+    return FullyControlledHSMM(init, trans, dists, durs)
+end
+
+#= Sojourns last at most 2 timesteps and state 2 almost never emits `1`, so a self-transition of
+probability `1e-17` in state 1 would explain `[1, 1, 1, 1]` better than the valid paths. =#
+const SELF_TRANSITION_OBS = [1, 1, 1, 1]
+function self_transition_hsmm(trans)
+    dists = [Categorical([1.0, 0.0]), Categorical([1e-20, 1 - 1e-20])]
+    return HSMM([0.6, 0.4], trans, dists, [Binomial(1, 0.5), Binomial(1, 0.5)])
+end
+const NEAR_ZERO_DIAGONALS = ([1e-17 1.0; 1.0 1e-17], sparse([1e-17 1.0; 1.0 1e-17]))
+
 all_state_seqs(N, T) = (collect(s) for s in Iterators.product(ntuple(_ -> 1:N, T)...))
 
 function brute_force_logdensityof(hsmm, obs_seq, control_seq, N)
@@ -464,6 +512,19 @@ end
         end
     end
 
+    @testset "Controlled transitions, durations and observations" begin
+        hsmm = fully_controlled_hsmm()
+        rng = StableRNG(203)
+        T = 6
+        obs_seq = 2 .* randn(rng, T) .+ 2
+        for control_seq in ([1, 2, 1, 2, 1, 2], [1, 1, 2, 2, 1, 1], rand(rng, 1:2, T))
+            @test logdensityof(hsmm, obs_seq, control_seq) ≈
+                brute_force_logdensityof(hsmm, obs_seq, control_seq, 3)
+            @test forward(hsmm, obs_seq, control_seq)[1] ≈
+                brute_force_marginals(hsmm, obs_seq, control_seq, 3)
+        end
+    end
+
     @testset "Sparse transition matrix" begin
         # Structural zeros must be read as impossible transitions, not as `log(1)`.
         init = [0.5, 0.3, 0.2]
@@ -532,6 +593,16 @@ end
         hsmm_eps = HSMM(init, [1e-17 1.0; 1.0 1e-17], dists, durs)
         obs_seq = randn(StableRNG(10), 8)
         @test forward(hsmm_eps, obs_seq) == forward(hsmm_zero, obs_seq)
+
+        # `sparse` drops exact zeros but stores the near-zero diagonal.
+        α_zero, logL_zero = forward(
+            self_transition_hsmm([0.0 1.0; 1.0 0.0]), SELF_TRANSITION_OBS
+        )
+        for trans in NEAR_ZERO_DIAGONALS
+            α, logL = forward(self_transition_hsmm(trans), SELF_TRANSITION_OBS)
+            @test α ≈ α_zero
+            @test logL ≈ logL_zero
+        end
     end
 
     @testset "Type promotion" begin
@@ -906,6 +977,35 @@ end
         end
     end
 
+    @testset "Controlled transitions, durations and observations" begin
+        hsmm = fully_controlled_hsmm()
+        rng = StableRNG(410)
+        T = 6
+        obs_seq = 2 .* randn(rng, T) .+ 2
+        for control_seq in ([1, 2, 1, 2, 1, 2], [1, 1, 2, 2, 1, 1], rand(rng, 1:2, T))
+            γ_bf, ξ_bf, logL_bf = brute_force_posteriors(hsmm, obs_seq, control_seq, 3)
+            storage = full_forward_backward(hsmm, obs_seq, control_seq; seq_ends=(T,))
+            @test storage.γ ≈ γ_bf
+            @test storage.ξ[1:(T - 1)] ≈ ξ_bf
+            @test only(storage.logL) ≈ logL_bf
+        end
+    end
+
+    @testset "Near-zero diagonal is ignored" begin
+        # `valid_hsmm` tolerates diagonal entries up to `eps`.
+        obs_seq = SELF_TRANSITION_OBS
+        seq_ends = (length(obs_seq),)
+        hsmm_zero = self_transition_hsmm([0.0 1.0; 1.0 0.0])
+        storage_zero = full_forward_backward(hsmm_zero, obs_seq; seq_ends)
+        # `sparse` drops exact zeros but stores the near-zero diagonal.
+        for trans in NEAR_ZERO_DIAGONALS
+            storage = full_forward_backward(self_transition_hsmm(trans), obs_seq; seq_ends)
+            @test storage.γ ≈ storage_zero.γ
+            @test storage.ξ ≈ storage_zero.ξ
+            @test storage.logL ≈ storage_zero.logL
+        end
+    end
+
     @testset "Sparse transition matrix" begin
         # Structural zeros must be read as impossible transitions, not as `log(1)`.
         init = [0.5, 0.3, 0.2]
@@ -1073,6 +1173,7 @@ end
     end
 end
 
+# Unlike the marginals, maximization never sums probabilities, so `Float64` is precise enough.
 function brute_force_viterbi(hsmm, obs_seq, control_seq, N; max_duration=length(obs_seq))
     T = length(obs_seq)
     best_q, best_logL = zeros(Int, T), -Inf
@@ -1126,6 +1227,7 @@ end
             q, logL = viterbi(hsmm, obs_seq)
             @test q == q_hmm
             @test logL ≈ logL_hmm
+            @test only(logL) ≈ joint_logdensityof(hsmm, obs_seq, q)
         end
     end
 
@@ -1143,6 +1245,44 @@ end
             q, logL = viterbi(hsmm, obs_seq, control_seq)
             @test q == q_bf
             @test only(logL) ≈ logL_bf
+            @test only(logL) ≈ joint_logdensityof(hsmm, obs_seq, q, control_seq)
+        end
+    end
+
+    @testset "Controlled transitions, durations and observations" begin
+        hsmm = fully_controlled_hsmm()
+        rng = StableRNG(507)
+        T = 6
+        obs_seq = 2 .* randn(rng, T) .+ 2
+        for control_seq in ([1, 2, 1, 2, 1, 2], [1, 1, 2, 2, 1, 1], rand(rng, 1:2, T))
+            q_bf, logL_bf = brute_force_viterbi(hsmm, obs_seq, control_seq, 3)
+            q, logL = viterbi(hsmm, obs_seq, control_seq)
+            @test q == q_bf
+            @test only(logL) ≈ logL_bf
+            @test only(logL) ≈ joint_logdensityof(hsmm, obs_seq, q, control_seq)
+        end
+
+        # A `Fill` of a real control takes the fast path for constant controls.
+        for c in 1:2
+            q_bf, logL_bf = brute_force_viterbi(hsmm, obs_seq, fill(c, T), 3)
+            q, logL = viterbi(hsmm, obs_seq, Fill(c, T))
+            @test q == q_bf
+            @test only(logL) ≈ logL_bf
+            @test viterbi(hsmm, obs_seq, fill(c, T)) == (q, logL)
+        end
+    end
+
+    @testset "Near-zero diagonal is ignored" begin
+        # `valid_hsmm` tolerates diagonal entries up to `eps`.
+        q_zero, logL_zero = viterbi(
+            self_transition_hsmm([0.0 1.0; 1.0 0.0]), SELF_TRANSITION_OBS
+        )
+        @test q_zero != SELF_TRANSITION_OBS
+        # `sparse` drops exact zeros but stores the near-zero diagonal.
+        for trans in NEAR_ZERO_DIAGONALS
+            q, logL = viterbi(self_transition_hsmm(trans), SELF_TRANSITION_OBS)
+            @test q == q_zero
+            @test logL ≈ logL_zero
         end
     end
 
@@ -1162,11 +1302,14 @@ end
         q, logL = viterbi(hsmm_sparse, obs_seq)
         @test q == q_bf
         @test only(logL) ≈ logL_bf
+        @test only(logL) ≈ joint_logdensityof(hsmm_sparse, obs_seq, q)
         @test viterbi(hsmm_dense, obs_seq) == (q, logL)
 
-        storage = initialize_viterbi(hsmm_sparse, obs_seq, control_seq; seq_ends=(T,))
         seq_ends = (T,)
+        storage = initialize_viterbi(hsmm_sparse, obs_seq, control_seq; seq_ends)
         call_viterbi!(storage, hsmm_sparse, obs_seq, control_seq, seq_ends)
+        @test storage.q == q
+        @test storage.logL == logL
         @test (@allocated call_viterbi!(
             storage, hsmm_sparse, obs_seq, control_seq, seq_ends
         )) == 0
@@ -1185,7 +1328,13 @@ end
             q, logL = viterbi(hsmm, obs_seq; max_duration)
             @test q == q_bf
             @test only(logL) ≈ logL_bf
+            @test only(logL) ≈ joint_logdensityof(hsmm, obs_seq, q)
         end
+
+        # No state sequence fits the duration support.
+        dists = [Categorical([1.0, 0.0]), Categorical([0.0, 1.0])]
+        hsmm = HSMM(init, trans, dists, [Binomial(1, 0.5), Binomial(1, 0.5)])
+        @test_throws ArgumentError viterbi(hsmm, [1, 1, 1])
     end
 
     @testset "max_duration" begin
@@ -1199,6 +1348,8 @@ end
             q, logL = viterbi(hsmm, obs_seq; max_duration)
             @test q == q_bf
             @test only(logL) ≈ logL_bf
+            # Truncation restricts the search but does not bias the loglikelihood.
+            @test only(logL) ≈ joint_logdensityof(hsmm, obs_seq, q)
             @test longest_segment(q) <= max_duration
         end
     end
@@ -1214,6 +1365,7 @@ end
             q, logL = viterbi(hsmm, obs_seq)
             @test q == q_bf
             @test only(logL) ≈ logL_bf
+            @test only(logL) ≈ joint_logdensityof(hsmm, obs_seq, q)
             # State 1 cannot emit observation 1.
             @test all(q[t] == 2 for t in 1:T if obs_seq[t] == 1)
         end
@@ -1237,10 +1389,16 @@ end
             @test q[t1:t2] == q_k
             @test logL[k] ≈ only(logL_k)
         end
-        # Repeat to expose thread scheduling nondeterminism.
-        for _ in 1:20
-            @test viterbi(hsmm, obs_seq; seq_ends) == (q, logL)
-        end
+
+        # The storage can be reused for other sequences of the same lengths.
+        control_seq = fill(nothing, length(obs_seq))
+        storage = initialize_viterbi(hsmm, obs_seq, control_seq; seq_ends)
+        viterbi!(storage, hsmm, obs_seq, control_seq; seq_ends)
+        @test storage.q == q
+        @test storage.logL == logL
+        other_obs_seq = randn(rng, length(obs_seq))
+        viterbi!(storage, hsmm, other_obs_seq, control_seq; seq_ends)
+        @test (storage.q, storage.logL) == viterbi(hsmm, other_obs_seq; seq_ends)
     end
 
     @testset "Empty subsequences" begin
@@ -1268,6 +1426,18 @@ end
         q, logL = viterbi(hsmm32, obs_seq)
         @test q == [1, 2, 1, 2]
         @test logL isa Vector{Float64}
+
+        # Without any `Float64` component, the computation stays in `Float32`.
+        hsmm32_only = HSMM(
+            Float32[0.6, 0.4],
+            Float32[0.0 1.0; 1.0 0.0],
+            [Normal(0.0f0, 1.0f0), Normal(5.0f0, 1.0f0)],
+            [Geometric(0.4f0), Geometric(0.6f0)],
+        )
+        q32, logL32 = viterbi(hsmm32_only, obs_seq)
+        @test q32 == q
+        @test logL32 isa Vector{Float32}
+        @test logL32 ≈ logL
     end
 
     @testset "Allocations" begin
@@ -1279,6 +1449,7 @@ end
         control_seq = fill(nothing, T)
         storage = initialize_viterbi(hsmm, obs_seq, control_seq; seq_ends)
         call_viterbi!(storage, hsmm, obs_seq, control_seq, seq_ends)  # warm up
+        @test (storage.q, storage.logL) == viterbi(hsmm, obs_seq)
         @test (@allocated call_viterbi!(storage, hsmm, obs_seq, control_seq, seq_ends)) == 0
     end
 end

@@ -74,66 +74,70 @@ function initialize_viterbi(
     )
 end
 
-# Like `accumulate_incoming!` with a max instead of a sum. Return false if no state is reachable.
+#= For each state `j`, find the best path that leaves another state at `s - 1` and enters `j` at
+`s`: store its log-probability in `incoming[j]` and the state it leaves in `best_previous[j, s]`.
+Return false if no state can be entered at `s`. =#
 function best_incoming!(
     incoming::AbstractVector{R},
     best_previous::AbstractMatrix{Int},
     log_best_ends::AbstractMatrix{R},
     log_trans::AbstractMatrix,
-    t::Integer,
-    N::Integer,
-    log_zero::R,
+    s::Integer,
 ) where {R}
+    N = length(incoming)
     reachable = false
     for j in 1:N
-        log_max_prev, i_max = log_zero, 0
+        log_max_prev, i_max = convert(R, -Inf), 0
         for i in 1:N
-            # HSMM diagonals may be close to zero rather than exactly zero.
+            #= `valid_hsmm` tolerates diagonal entries up to `eps`, and staying in `j` is not a
+            new sojourn, so skip the diagonal as `joint_logdensityof` does. =#
             if i != j
-                log_prev = log_best_ends[i, t] + log_trans[i, j]
+                log_prev = log_best_ends[i, s - 1] + log_trans[i, j]
                 if log_prev > log_max_prev
                     log_max_prev, i_max = log_prev, i
                 end
             end
         end
         incoming[j] = log_max_prev
-        best_previous[j, t + 1] = i_max
+        best_previous[j, s] = i_max
         reachable |= !is_log_zero(log_max_prev)
     end
     return reachable
 end
 
-# A structural zero would read as `log(1)`, see the sparse `accumulate_incoming!`.
+#= `elementwise_log` only takes the log of stored entries, so a structural zero would read as
+`log(1)`. Visit the stored entries of each column instead. =#
 function best_incoming!(
     incoming::AbstractVector{R},
     best_previous::AbstractMatrix{Int},
     log_best_ends::AbstractMatrix{R},
     log_trans::SparseMatrixCSC,
-    t::Integer,
-    N::Integer,
-    log_zero::R,
+    s::Integer,
 ) where {R}
+    N = length(incoming)
     rows, vals = rowvals(log_trans), nonzeros(log_trans)
     reachable = false
     for j in 1:N
-        log_max_prev, i_max = log_zero, 0
+        log_max_prev, i_max = convert(R, -Inf), 0
         for p in nzrange(log_trans, j)
             i = rows[p]
             if i != j
-                log_prev = log_best_ends[i, t] + vals[p]
+                log_prev = log_best_ends[i, s - 1] + vals[p]
                 if log_prev > log_max_prev
                     log_max_prev, i_max = log_prev, i
                 end
             end
         end
         incoming[j] = log_max_prev
-        best_previous[j, t + 1] = i_max
+        best_previous[j, s] = i_max
         reachable |= !is_log_zero(log_max_prev)
     end
     return reachable
 end
 
-# Like `extend_segments!` with a max instead of a sum, for the segments starting at `s`.
+#= For each state `j` and duration `d`, extend the best path entering `j` at `s` by a sojourn
+covering `s:(s + d - 1)`, and keep it in `log_best_ends[j, s + d - 1]` if it beats the paths
+whose sojourn in `j` starts earlier. =#
 function extend_best_segments!(;
     log_best_ends::AbstractMatrix{R},
     best_durations::AbstractMatrix{Int},
@@ -159,7 +163,7 @@ function extend_best_segments!(;
             log_obs = segment_log_obs(
                 cum_log_obs[j, t_end], cum_start, obs_zeros[j, t_end], zeros_start, log_zero
             )
-            # Later segments contain the same impossible observation.
+            # Every longer segment starting at `s` contains the same impossible observation.
             is_log_zero(log_obs) && break
             # The final segment is right-censored.
             log_d = t_end == t2 ? log_surv[d, j] : log_dur[d, j]
@@ -198,41 +202,33 @@ function _viterbi!(
     uniform = uniform_controls(control_seq)
 
     cumulate_log_obs!(
-        cum_log_obs,
-        obs_zeros,
-        hsmm,
-        obs_seq,
-        control_seq,
-        t1,
-        t2,
-        N;
-        error_if_not_finite=true,
+        cum_log_obs, obs_zeros, hsmm, obs_seq, control_seq; t1, t2, error_if_not_finite=true
     )
     @views log_best_ends[:, t1:t2] .= log_zero
 
-    # Forward sweep over the segment starts, as in the forward pass.
+    #= Sweep over the segment starts `s`. When the sweep reaches `s`, every sojourn ending at
+    `s - 1` started earlier, so `log_best_ends[:, s - 1]` is final. =#
     filled_control = control_seq[t1]
     support = fill_duration_buffers!(log_dur, log_surv, hsmm, filled_control, max_duration)
     # Rebuilding the transitions costs `N^2` evaluations, so skip repeated controls.
     trans_control = control_seq[t1]
     log_trans = log_transition_matrix(hsmm, trans_control)
+    # The first segment is entered from the initial distribution.
     copyto!(incoming, log_initialization(hsmm))
     for s in t1:t2
         if s > t1
-            # Avoid building a controlled transition matrix for an unreachable segment.
-            reachable = false
-            for i in 1:N
-                reachable |= !is_log_zero(log_best_ends[i, s - 1])
-            end
-            reachable || continue
-            # The control at time `s` drives the transition into time `s`.
+            # The control at the start of a segment selects the transition into it.
             if !uniform && !isequal(control_seq[s], trans_control)
+                # Avoid building a controlled transition matrix for an unreachable segment.
+                any_end = false
+                for i in 1:N
+                    any_end |= !is_log_zero(log_best_ends[i, s - 1])
+                end
+                any_end || continue
                 trans_control = control_seq[s]
                 log_trans = log_transition_matrix(hsmm, trans_control)
             end
-            best_incoming!(
-                incoming, best_previous, log_best_ends, log_trans, s - 1, N, log_zero
-            ) || continue
+            best_incoming!(incoming, best_previous, log_best_ends, log_trans, s) || continue
             if !uniform && !isequal(control_seq[s], filled_control)
                 filled_control = control_seq[s]
                 support = fill_duration_buffers!(
@@ -299,13 +295,18 @@ end
 $(SIGNATURES)
 
 Apply the Viterbi algorithm to infer the most likely state sequence corresponding to `obs_seq` for
-`hsmm`. The final segment of each sequence is right-censored, as in
-[`joint_logdensityof`](@ref).
+`hsmm`. Uses the explicit-duration formulation of [Yu2010](@cite).
 
 Return a tuple `(storage.q, storage.logL)` where `storage` is of type
 [`HSMMViterbiStorage`](@ref).
 
-`max_duration` limits the sojourn lengths considered, as in [`forward`](@ref).
+`storage.logL[k]` is the joint loglikelihood of sequence `k` and its state sequence in
+`storage.q`, as given by [`joint_logdensityof`](@ref), so the final segment is right-censored.
+
+`max_duration` limits the sojourn lengths considered, as in [`forward`](@ref). The default gives
+the exact result. A smaller value restricts the search to state sequences whose sojourns all last
+at most `max_duration` timesteps: `storage.q` is the most likely of those, and `storage.logL` is
+still its exact joint loglikelihood.
 """
 function viterbi(
     hsmm::AbstractHSMM,

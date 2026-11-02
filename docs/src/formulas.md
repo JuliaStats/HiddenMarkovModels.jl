@@ -354,9 +354,15 @@ I^*_{j,t} & = \max_{i \neq j} E^*_{i,t} a_{i,j,t}
 \end{align*}
 ```
 
+As in the forward-backward pass, $p_j$, $S_j$ and $a_{i,j,t}$ follow the control at the start of the segment they describe.
 The joint loglikelihood of the most likely state sequence is $\log \max_j E^*_{j,T}$.
 Storing the maximizing duration $t-s+1$ for each $E^*_{j,t}$ and the maximizing state $i$ for each $I^*_{j,t}$ is enough to backtrack, one segment at a time, from the best final state.
-As in the forward pass, the recursion is carried out in the log domain, with the same segment observation likelihoods, truncation and complexity.
+As in the forward pass, the recursion is carried out in the log domain, with the same segment observation likelihoods and complexity.
+
+### Truncation
+
+With $D < T$, the maximum over $s$ is restricted to $t - D + 1 \leq s \leq t$, so only state sequences whose sojourns all last at most $D$ timesteps are considered.
+Unlike the forward pass, nothing is underestimated: the result is the most likely of these state sequences, together with its exact joint loglikelihood, since $S_j(d)$ is never truncated for $d \leq D$.
 
 ## Bibliography
 

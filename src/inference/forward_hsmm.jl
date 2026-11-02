@@ -144,18 +144,20 @@ function fill_duration_buffers!(
     return support
 end
 
-# Keep impossible observations out of the finite prefix sums.
+#= Fill the observation prefix sums of the sequence `t1:t2`, from which `segment_log_obs`
+computes each segment in O(1). Impossible observations are counted in `obs_zeros` instead of
+being summed, so that the prefix sums stay finite. =#
 function cumulate_log_obs!(
     cum_log_obs::AbstractMatrix{R},
     obs_zeros::AbstractMatrix{Int},
     hsmm::AbstractHSMM,
     obs_seq::AbstractVector,
-    control_seq::AbstractVector,
+    control_seq::AbstractVector;
     t1::Integer,
     t2::Integer,
-    N::Integer;
     error_if_not_finite::Bool,
 ) where {R}
+    N = size(cum_log_obs, 1)
     for t in t1:t2
         obs_logdensities!(
             view(cum_log_obs, :, t), hsmm, obs_seq[t], control_seq[t]; error_if_not_finite
@@ -337,7 +339,7 @@ function _forward!(
     uniform = uniform_controls(control_seq)
 
     cumulate_log_obs!(
-        cum_log_obs, obs_zeros, hsmm, obs_seq, control_seq, t1, t2, N; error_if_not_finite
+        cum_log_obs, obs_zeros, hsmm, obs_seq, control_seq; t1, t2, error_if_not_finite
     )
 
     log_init = log_initialization(hsmm)
