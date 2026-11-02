@@ -338,6 +338,33 @@ The identity still holds and serves as a consistency check.
 
 Everything is computed during a single backward sweep over $s$, in the log domain: when the sweep reaches $s$, the variables $G_{\cdot, s:T}$ are already known, so $H_{\cdot, s}$, the weights $w_{\cdot,s,\cdot}$ and then $G_{\cdot, s-1}$ and $\xi_{\cdot,\cdot,s-1}$ follow.
 
+## Explicit-duration HSMM Viterbi
+
+The Viterbi algorithm replaces the sums of the forward pass with maximizations.
+Since consecutive sojourns are in different states, a sequence of segments determines the state sequence and vice versa, so maximizing over segmentations maximizes the joint likelihood $\mathbb{P}(X_{1:T}, Y_{1:T})$, in which the final segment is right-censored.
+
+### Recursion
+
+With the convention $I^*_{j,0} = \pi_j$, as in the forward-backward marginals, the best path whose sojourn in $j$ ends at $t$, and the best path entering $j$ at $t+1$, satisfy
+
+```math
+\begin{align*}
+E^*_{j,t} & = \max_{1 \leq s \leq t} I^*_{j,s-1} \left(\prod_{u=s}^{t} b_{j,u}\right) \times \begin{cases} p_j(t-s+1) & \text{if } t < T \\ S_j(T-s+1) & \text{if } t = T \end{cases} \\
+I^*_{j,t} & = \max_{i \neq j} E^*_{i,t} a_{i,j,t}
+\end{align*}
+```
+
+As in the forward-backward pass, $p_j$, $S_j$ and $a_{i,j,t}$ follow the control at the start of the segment they describe.
+The joint loglikelihood of the most likely state sequence is $\log \max_j E^*_{j,T}$.
+To backtrack, we store the maximizing duration $\delta^*_{j,t} = t-s+1$ for each $E^*_{j,t}$, and the maximizing state $\psi^*_{j,t+1} = i$ for each $I^*_{j,t}$, indexed by the time $t+1$ at which the sojourn in $j$ starts.
+Starting from $j = \arg\max_j E^*_{j,T}$ and $t = T$, the last segment covers $s, \dots, t$ with $s = t - \delta^*_{j,t} + 1$, and the previous one ends at $s-1$ in state $\psi^*_{j,s}$, until $s = 1$.
+As in the forward pass, the recursion is carried out in the log domain, with the same segment observation likelihoods and complexity.
+
+### Truncation
+
+With $D < T$, the maximum over $s$ is restricted to $t - D + 1 \leq s \leq t$, so only state sequences whose sojourns all last at most $D$ timesteps are considered.
+Unlike the forward pass, nothing is underestimated: the result is the most likely of these state sequences, together with its exact joint loglikelihood, since $S_j(d)$ is never truncated for $d \leq D$.
+
 ## Bibliography
 
 ```@bibliography
