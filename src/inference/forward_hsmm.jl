@@ -138,9 +138,9 @@ end
 
 # A changed zero count means the segment contains an impossible observation.
 @inline function segment_log_obs(
-    cum_end::R, cum_start::R, zeros_end::Integer, zeros_start::Integer, log_zero::R
+    cum_end::R, cum_start::R, zeros_end::Integer, zeros_start::Integer
 ) where {R}
-    return zeros_end == zeros_start ? cum_end - cum_start : log_zero
+    return zeros_end == zeros_start ? cum_end - cum_start : convert(R, -Inf)
 end
 
 # Return false if no next state is reachable.
@@ -149,12 +149,11 @@ function accumulate_incoming!(
     log_ends::AbstractMatrix{R},
     log_trans::AbstractMatrix,
     t::Integer,
-    N::Integer,
-    log_zero::R,
 ) where {R}
+    N = length(incoming)
     reachable = false
     for j in 1:N
-        log_sum_prev = log_zero
+        log_sum_prev = convert(R, -Inf)
         for i in 1:N
             #= `valid_hsmm` tolerates diagonal entries up to `eps`, and staying in `j` is not a
             new sojourn, so skip the diagonal as `joint_logdensityof` does. =#
@@ -177,13 +176,12 @@ function accumulate_incoming!(
     log_ends::AbstractMatrix{R},
     log_trans::SparseMatrixCSC,
     t::Integer,
-    N::Integer,
-    log_zero::R,
 ) where {R}
+    N = length(incoming)
     rows, vals = rowvals(log_trans), nonzeros(log_trans)
     reachable = false
     for j in 1:N
-        log_sum_prev = log_zero
+        log_sum_prev = convert(R, -Inf)
         for p in nzrange(log_trans, j)
             i = rows[p]
             if i != j
@@ -206,10 +204,9 @@ function extend_segments!(;
     log_surv::AbstractMatrix{R},
     t::Integer,
     t2::Integer,
-    N::Integer,
     max_duration::Integer,
-    log_zero::R,
 ) where {R}
+    N = length(incoming)
     for d in 1:min(max_duration, t2 - t)
         t_end = t + d
         for j in 1:N
@@ -220,7 +217,6 @@ function extend_segments!(;
                     cum_log_obs[j, t],
                     obs_zeros[j, t_end],
                     obs_zeros[j, t],
-                    log_zero,
                 )
                 if !is_log_zero(log_obs)
                     base = inc + log_obs
@@ -243,8 +239,8 @@ function normalize_marginals!(
     log_ongoing::AbstractMatrix{R},
     t1::Integer,
     t2::Integer,
-    N::Integer,
 ) where {R}
+    N = size(α, 1)
     for t in t1:t2
         logm = log_ongoing[1, t]
         for i in 2:N
@@ -325,7 +321,7 @@ function _forward!(
         t_end = t1 + d - 1
         for i in 1:N
             log_obs = segment_log_obs(
-                cum_log_obs[i, t_end], zero(R), obs_zeros[i, t_end], 0, log_zero
+                cum_log_obs[i, t_end], zero(R), obs_zeros[i, t_end], 0
             )
             if !is_log_zero(log_obs)
                 base = log_init[i] + log_obs
@@ -343,7 +339,7 @@ function _forward!(
     if uniform
         log_trans = log_transition_matrix(hsmm, control_seq[t1])
         for t in t1:(t2 - 1)
-            accumulate_incoming!(incoming, log_ends, log_trans, t, N, log_zero) || continue
+            accumulate_incoming!(incoming, log_ends, log_trans, t) || continue
             extend_segments!(;
                 log_ends,
                 log_ongoing,
@@ -354,9 +350,7 @@ function _forward!(
                 log_surv,
                 t,
                 t2,
-                N,
                 max_duration=support,
-                log_zero,
             )
         end
     else
@@ -375,7 +369,7 @@ function _forward!(
                 trans_control = control_seq[t + 1]
                 log_trans = log_transition_matrix(hsmm, trans_control)
             end
-            accumulate_incoming!(incoming, log_ends, log_trans, t, N, log_zero) || continue
+            accumulate_incoming!(incoming, log_ends, log_trans, t) || continue
             if !isequal(control_seq[t + 1], filled_control)
                 filled_control = control_seq[t + 1]
                 support = fill_duration_buffers!(
@@ -392,14 +386,12 @@ function _forward!(
                 log_surv,
                 t,
                 t2,
-                N,
                 max_duration=support,
-                log_zero,
             )
         end
     end
 
-    normalize_marginals!(α, log_prefix, log_ongoing, t1, t2, N)
+    normalize_marginals!(α, log_prefix, log_ongoing, t1, t2)
     logL[k] = log_prefix[t2]
     error_if_not_finite && @argcheck isfinite(logL[k])
     return nothing
