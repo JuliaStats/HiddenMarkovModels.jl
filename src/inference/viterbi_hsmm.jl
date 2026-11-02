@@ -20,9 +20,9 @@ struct HSMMViterbiStorage{R}
     # Internal buffers
     # `log_best_ends[j,t] = log E*[j,t]`, best path whose sojourn in `j` ends at `t`
     log_best_ends::Matrix{R}
-    # `best_durations[j,t]`: duration of the sojourn in `j` ending at `t` on that path
+    # `best_durations[j,t] = δ*[j,t]`, duration of the sojourn in `j` ending at `t` on that path
     best_durations::Matrix{Int}
-    # `best_previous[j,s]`: state before the sojourn in `j` starting at `s` on the best path
+    # `best_previous[j,s] = ψ*[j,s]`, state left at `s-1` by the best path entering `j` at `s`
     best_previous::Matrix{Int}
     # `cum_log_obs[j,t] = ℓ[j,t]`, sum of the finite `log b[j,u]` for `u ≤ t`
     cum_log_obs::Matrix{R}
@@ -32,7 +32,7 @@ struct HSMMViterbiStorage{R}
     log_dur::Vector{Matrix{R}}
     # `log_surv[k][d,j] = log S_j(d)` for sequence `k`
     log_surv::Vector{Matrix{R}}
-    # `incoming[k][j] = log I*[j,t]` for sequence `k` at the current `t`
+    # `incoming[k][j] = log I*[j,s-1]` for sequence `k` at the current segment start `s`
     incoming::Vector{Vector{R}}
 end
 
@@ -149,10 +149,10 @@ function extend_best_segments!(;
     s::Integer,
     t1::Integer,
     t2::Integer,
-    N::Integer,
     max_duration::Integer,
-    log_zero::R,
 ) where {R}
+    N = length(incoming)
+    log_zero = convert(R, -Inf)
     for j in 1:N
         inc = incoming[j]
         is_log_zero(inc) && continue
@@ -206,51 +206,82 @@ function _viterbi!(
     )
     @views log_best_ends[:, t1:t2] .= log_zero
 
-    #= Sweep over the segment starts `s`. When the sweep reaches `s`, every sojourn ending at
-    `s - 1` started earlier, so `log_best_ends[:, s - 1]` is final. =#
-    filled_control = control_seq[t1]
-    support = fill_duration_buffers!(log_dur, log_surv, hsmm, filled_control, max_duration)
-    # Rebuilding the transitions costs `N^2` evaluations, so skip repeated controls.
-    trans_control = control_seq[t1]
-    log_trans = log_transition_matrix(hsmm, trans_control)
+    # The control at the start of a segment selects its duration distribution.
+    support = fill_duration_buffers!(log_dur, log_surv, hsmm, control_seq[t1], max_duration)
     # The first segment is entered from the initial distribution.
     copyto!(incoming, log_initialization(hsmm))
-    for s in t1:t2
-        if s > t1
-            # The control at the start of a segment selects the transition into it.
-            if !uniform && !isequal(control_seq[s], trans_control)
-                # Avoid building a controlled transition matrix for an unreachable segment.
-                any_end = false
-                for i in 1:N
-                    any_end |= !is_log_zero(log_best_ends[i, s - 1])
-                end
-                any_end || continue
+    extend_best_segments!(;
+        log_best_ends,
+        best_durations,
+        cum_log_obs,
+        obs_zeros,
+        incoming,
+        log_dur,
+        log_surv,
+        s=t1,
+        t1,
+        t2,
+        max_duration=support,
+    )
+
+    #= Sweep over the segment starts `s`. When the sweep reaches `s`, every sojourn ending at
+    `s - 1` started earlier, so `log_best_ends[:, s - 1]` is final. =#
+    # Reuse transitions and durations when the controls are constant.
+    if uniform
+        log_trans = log_transition_matrix(hsmm, control_seq[t1])
+        for s in (t1 + 1):t2
+            best_incoming!(incoming, best_previous, log_best_ends, log_trans, s) || continue
+            extend_best_segments!(;
+                log_best_ends,
+                best_durations,
+                cum_log_obs,
+                obs_zeros,
+                incoming,
+                log_dur,
+                log_surv,
+                s,
+                t1,
+                t2,
+                max_duration=support,
+            )
+        end
+    else
+        # Rebuilding either costs `N^2` or `N * max_duration` evaluations, so skip repeated controls.
+        trans_control = control_seq[t1]
+        log_trans = log_transition_matrix(hsmm, trans_control)
+        filled_control = control_seq[t1]
+        for s in (t1 + 1):t2
+            # Avoid building a controlled transition matrix for an unreachable segment.
+            reachable = false
+            for i in 1:N
+                reachable |= !is_log_zero(log_best_ends[i, s - 1])
+            end
+            reachable || continue
+            if !isequal(control_seq[s], trans_control)
                 trans_control = control_seq[s]
                 log_trans = log_transition_matrix(hsmm, trans_control)
             end
             best_incoming!(incoming, best_previous, log_best_ends, log_trans, s) || continue
-            if !uniform && !isequal(control_seq[s], filled_control)
+            if !isequal(control_seq[s], filled_control)
                 filled_control = control_seq[s]
                 support = fill_duration_buffers!(
                     log_dur, log_surv, hsmm, filled_control, max_duration
                 )
             end
+            extend_best_segments!(;
+                log_best_ends,
+                best_durations,
+                cum_log_obs,
+                obs_zeros,
+                incoming,
+                log_dur,
+                log_surv,
+                s,
+                t1,
+                t2,
+                max_duration=support,
+            )
         end
-        extend_best_segments!(;
-            log_best_ends,
-            best_durations,
-            cum_log_obs,
-            obs_zeros,
-            incoming,
-            log_dur,
-            log_surv,
-            s,
-            t1,
-            t2,
-            N,
-            max_duration=support,
-            log_zero,
-        )
     end
 
     # Backtrack segment by segment, from the best right-censored final segment.
@@ -295,7 +326,8 @@ end
 $(SIGNATURES)
 
 Apply the Viterbi algorithm to infer the most likely state sequence corresponding to `obs_seq` for
-`hsmm`. Uses the explicit-duration formulation of [Yu2010](@cite).
+`hsmm`. Uses the extended Viterbi algorithm of [Yu2010](@cite), Section 2.2.3, for the
+explicit-duration formulation of Section 3.1.
 
 Return a tuple `(storage.q, storage.logL)` where `storage` is of type
 [`HSMMViterbiStorage`](@ref).

@@ -1277,7 +1277,8 @@ end
         q_zero, logL_zero = viterbi(
             self_transition_hsmm([0.0 1.0; 1.0 0.0]), SELF_TRANSITION_OBS
         )
-        @test q_zero != SELF_TRANSITION_OBS
+        # Staying in state 1 throughout would need the forbidden self-transition.
+        @test q_zero != fill(1, length(SELF_TRANSITION_OBS))
         # `sparse` drops exact zeros but stores the near-zero diagonal.
         for trans in NEAR_ZERO_DIAGONALS
             q, logL = viterbi(self_transition_hsmm(trans), SELF_TRANSITION_OBS)
@@ -1352,6 +1353,24 @@ end
             @test only(logL) ≈ joint_logdensityof(hsmm, obs_seq, q)
             @test longest_segment(q) <= max_duration
         end
+
+        # Long sojourns make truncation visible.
+        init = [0.5, 0.5]
+        trans = [0.0 1.0; 1.0 0.0]
+        hsmm = HSMM(
+            init, trans, [Normal(0.0), Normal(3.0)], [Geometric(0.1), Geometric(0.1)]
+        )
+        obs_seq = [zeros(6); fill(3.0, 2)]
+        T = length(obs_seq)
+        results = [viterbi(hsmm, obs_seq; max_duration) for max_duration in 1:T]
+        logLs = [only(logL) for (_, logL) in results]
+        @test issorted(logLs)
+        for D in 2:T
+            # The optimum improves exactly when it needs a sojourn of length `D`.
+            q = first(results[D])
+            @test (logLs[D] > logLs[D - 1]) == (longest_segment(q) == D)
+        end
+        @test logLs[T] > logLs[1]
     end
 
     @testset "Zero-probability observations" begin
@@ -1493,5 +1512,12 @@ end
     )
     @test_call target_modules = (HiddenMarkovModels,) viterbi(
         hsmm, obs_seq; seq_ends=[5, T]
+    )
+
+    # Controls that vary take a separate code path.
+    controlled_hsmm = fully_controlled_hsmm()
+    int_control_seq = rand(rng, 1:2, T)
+    @test_opt target_modules = (HiddenMarkovModels,) viterbi(
+        controlled_hsmm, obs_seq, int_control_seq
     )
 end
