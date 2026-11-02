@@ -152,7 +152,6 @@ function extend_best_segments!(;
     max_duration::Integer,
 ) where {R}
     N = length(incoming)
-    log_zero = convert(R, -Inf)
     for j in 1:N
         inc = incoming[j]
         is_log_zero(inc) && continue
@@ -161,7 +160,7 @@ function extend_best_segments!(;
         for d in 1:min(max_duration, t2 - s + 1)
             t_end = s + d - 1
             log_obs = segment_log_obs(
-                cum_log_obs[j, t_end], cum_start, obs_zeros[j, t_end], zeros_start, log_zero
+                cum_log_obs[j, t_end], cum_start, obs_zeros[j, t_end], zeros_start
             )
             # Every longer segment starting at `s` contains the same impossible observation.
             is_log_zero(log_obs) && break

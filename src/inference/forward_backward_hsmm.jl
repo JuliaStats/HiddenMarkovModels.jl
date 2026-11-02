@@ -99,11 +99,11 @@ function accumulate_segments!(;
     s::Integer,
     t1::Integer,
     t2::Integer,
-    N::Integer,
     max_duration::Integer,
     logL::R,
-    log_zero::R,
 ) where {R}
+    N = size(γ, 1)
+    log_zero = convert(R, -Inf)
     D = min(max_duration, t2 - s + 1)
     for j in 1:N
         cum_start = s == t1 ? zero(R) : cum_log_obs[j, s - 1]
@@ -114,7 +114,7 @@ function accumulate_segments!(;
             t_end = s + d - 1
             weights[d] = zero(R)
             log_obs = segment_log_obs(
-                cum_log_obs[j, t_end], cum_start, obs_zeros[j, t_end], zeros_start, log_zero
+                cum_log_obs[j, t_end], cum_start, obs_zeros[j, t_end], zeros_start
             )
             is_log_zero(log_obs) && continue
             # The final segment is right-censored.
@@ -142,11 +142,10 @@ function propagate_backward!(
     log_from_start::AbstractMatrix{R},
     log_trans,
     t::Integer,
-    N::Integer,
-    log_zero::R,
 ) where {R}
+    N = size(log_after_end, 1)
     for i in 1:N
-        log_sum_next = log_zero
+        log_sum_next = convert(R, -Inf)
         for j in 1:N
             # HSMM diagonals may be close to zero rather than exactly zero.
             if i != j
@@ -166,11 +165,10 @@ function propagate_backward!(
     log_from_start::AbstractMatrix{R},
     log_trans::SparseMatrixCSC,
     t::Integer,
-    N::Integer,
-    log_zero::R,
 ) where {R}
+    N = size(log_after_end, 1)
     rows, vals = rowvals(log_trans), nonzeros(log_trans)
-    @views log_after_end[:, t] .= log_zero
+    @views log_after_end[:, t] .= convert(R, -Inf)
     for j in 1:N
         for p in nzrange(log_trans, j)
             i = rows[p]
@@ -190,9 +188,9 @@ function transition_marginals!(
     log_from_start::AbstractMatrix{R},
     log_trans,
     t::Integer,
-    N::Integer,
     logL::R,
 ) where {R}
+    N = size(ξₜ, 1)
     for j in 1:N, i in 1:N
         log_ξ = log_ends[i, t] + log_trans[i, j] + log_from_start[j, t + 1]
         ξₜ[i, j] = (i == j || is_log_zero(log_ξ)) ? zero(R) : exp(log_ξ - logL)
@@ -208,9 +206,9 @@ function transition_marginals!(
     log_from_start::AbstractMatrix{R},
     log_trans::SparseMatrixCSC,
     t::Integer,
-    N::Integer,
     logL::R,
 ) where {R}
+    N = size(ξₜ, 1)
     rows, vals = rowvals(log_trans), nonzeros(log_trans)
     fill!(nonzeros(ξₜ), zero(R))
     for j in 1:N
@@ -245,9 +243,7 @@ function _forward_backward!(
     log_dur = forward.log_dur[k]
     log_surv = forward.log_surv[k]
     weights = storage.seg_weights[k]
-    N = length(hsmm)
     max_duration = sequence_max_duration(forward.max_duration, t1, t2)
-    log_zero = convert(R, -Inf)
     uniform = uniform_controls(control_seq)
     log_init = log_initialization(hsmm)
 
@@ -276,9 +272,7 @@ function _forward_backward!(
         if s == t1
             copyto!(view(log_starts, :, s), log_init)
         else
-            accumulate_incoming!(
-                view(log_starts, :, s), log_ends, log_trans, s - 1, N, log_zero
-            )
+            accumulate_incoming!(view(log_starts, :, s), log_ends, log_trans, s - 1)
         end
         accumulate_segments!(;
             γ,
@@ -293,18 +287,14 @@ function _forward_backward!(
             s,
             t1,
             t2,
-            N,
             max_duration=support,
             logL=logL[k],
-            log_zero,
         )
         if s > t1
-            propagate_backward!(
-                log_after_end, log_from_start, log_trans, s - 1, N, log_zero
-            )
+            propagate_backward!(log_after_end, log_from_start, log_trans, s - 1)
             if transition_marginals
                 transition_marginals!(
-                    ξ[s - 1], log_ends, log_from_start, log_trans, s - 1, N, logL[k]
+                    ξ[s - 1], log_ends, log_from_start, log_trans, s - 1, logL[k]
                 )
             end
         end
