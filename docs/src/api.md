@@ -143,6 +143,7 @@ HiddenMarkovModels.duration_logsurvival
 HiddenMarkovModels.StateSegments
 HiddenMarkovModels.AbstractLatentStateModel
 HiddenMarkovModels.valid_hsmm
+HiddenMarkovModels.fit_duration_in_sequence!
 ```
 
 ## Index
