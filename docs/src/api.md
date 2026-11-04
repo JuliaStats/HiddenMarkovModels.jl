@@ -143,6 +143,7 @@ HiddenMarkovModels.AbstractHSMM
 HiddenMarkovModels.HSMM
 HiddenMarkovModels.duration_distributions
 HiddenMarkovModels.valid_hsmm
+HiddenMarkovModels.fit_duration_in_sequence!
 ```
 
 ## Index
