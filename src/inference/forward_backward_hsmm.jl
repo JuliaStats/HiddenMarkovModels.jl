@@ -10,12 +10,16 @@ $(TYPEDFIELDS)
 struct HSMMForwardBackwardStorage{R,M<:AbstractMatrix{R}}
     "posterior state marginals `γ[i,t] = ℙ(X[t]=i | Y[1:T])`"
     γ::Matrix{R}
-    "posterior transition marginals `ξ[t][i,j] = ℙ(X[t]=i, X[t+1]=j | Y[1:T])`, with zero diagonal"
+    "posterior transition marginals `ξ[t][i,j] = ℙ(X[t]=i, X[t+1]=j | Y[1:T])`, with zero diagonal (only allocated with `transition_marginals=true`)"
     ξ::Vector{M}
     "one loglikelihood per observation sequence"
     logL::Vector{R}
     "storage of the forward pass, whose filtered marginals `forward.α` remain available"
     forward::HSMMForwardStorage{R}
+    "expected number of completed sojourns in state `j` lasting `d` steps, `completed_durations[d,j]`, summed over sequences (only allocated with `duration_counts=true`)"
+    completed_durations::Matrix{R}
+    "expected number of right-censored final sojourns in state `j` observed for `d` steps, `censored_durations[d,j]`, summed over sequences (only allocated with `duration_counts=true`)"
+    censored_durations::Matrix{R}
     # Internal buffers
     # `log_starts[j,t] = log ℙ(Y[1:t-1], a sojourn in j starts at t)`
     log_starts::Matrix{R}
@@ -26,10 +30,21 @@ struct HSMMForwardBackwardStorage{R,M<:AbstractMatrix{R}}
     # `seg_weights[k][d]`: posterior weight of the sojourn in the current state lasting `d`
     # steps from the current start, for sequence `k`
     seg_weights::Vector{Vector{R}}
+    # `seq_completed_durations[k][d,j]`: contribution of sequence `k` to `completed_durations`
+    seq_completed_durations::Vector{Matrix{R}}
+    # `seq_censored_durations[k][d,j]`: contribution of sequence `k` to `censored_durations`
+    seq_censored_durations::Vector{Matrix{R}}
+end
+
+# Without `duration_counts`, the counts are `0 × 0`.
+function has_duration_counts(storage::HSMMForwardBackwardStorage)
+    return size(storage.completed_durations, 2) > 0
 end
 
 """
 $(SIGNATURES)
+
+`duration_counts=true` allocates the buffers needed by `forward_backward!(...; duration_counts=true)`.
 """
 function initialize_forward_backward(
     hsmm::AbstractHSMM,
@@ -38,6 +53,7 @@ function initialize_forward_backward(
     seq_ends::AbstractVectorOrNTuple{Int},
     max_duration::Int=longest_sequence(seq_ends),
     transition_marginals=true,
+    duration_counts=false,
 )
     forward = initialize_forward(hsmm, obs_seq, control_seq; seq_ends, max_duration)
     N, T, K = length(hsmm), length(obs_seq), length(seq_ends)
@@ -66,8 +82,31 @@ function initialize_forward_backward(
         seg_weights[k] = Vector{R}(undef, size(forward.log_dur[k], 1))
     end
 
+    # Duration counts, accumulated per sequence for threading, and `0 × 0` unless requested.
+    count_dims(D) = duration_counts ? (D, N) : (0, 0)
+    seq_completed_durations = [
+        zeros(R, count_dims(size(log_dur, 1))) for log_dur in forward.log_dur
+    ]
+    seq_censored_durations = [
+        zeros(R, count_dims(size(log_dur, 1))) for log_dur in forward.log_dur
+    ]
+    D_max = min(max_duration, longest_sequence(seq_ends))
+    completed_durations = zeros(R, count_dims(D_max))
+    censored_durations = zeros(R, count_dims(D_max))
+
     return HSMMForwardBackwardStorage{R,M}(
-        γ, ξ, forward.logL, forward, log_starts, log_after_end, log_from_start, seg_weights
+        γ,
+        ξ,
+        forward.logL,
+        forward,
+        completed_durations,
+        censored_durations,
+        log_starts,
+        log_after_end,
+        log_from_start,
+        seg_weights,
+        seq_completed_durations,
+        seq_censored_durations,
     )
 end
 
@@ -85,6 +124,9 @@ end
 Fill `log_from_start[:, s]` and add the posterior weights of every segment starting at `s` to `γ`.
 Summing the weights over durations from the longest down gives the mass of the segments still
 running at each timestep, so `γ` is built without subtracting probabilities.
+
+With `duration_counts`, also add `w[j,s,d]` to the expected duration counts, keeping the
+right-censored final segment apart since its duration is only a lower bound on the sojourn.
 =#
 function accumulate_segments!(
     storage::HSMMForwardBackwardStorage{R},
@@ -93,11 +135,13 @@ function accumulate_segments!(
     t1::Integer,
     t2::Integer,
     max_duration::Integer,
+    duration_counts::Bool,
 ) where {R}
     (; γ, log_starts, log_after_end, log_from_start, forward) = storage
     (; cum_log_obs, obs_zeros) = forward
     log_dur, log_surv = forward.log_dur[k], forward.log_surv[k]
     weights, logL = storage.seg_weights[k], storage.logL[k]
+    counts = (storage.seq_completed_durations[k], storage.seq_censored_durations[k])
     N = size(γ, 1)
     log_zero = convert(R, -Inf)
     D = min(max_duration, t2 - s + 1)
@@ -128,6 +172,22 @@ function accumulate_segments!(
             running += weights[d]
             γ[j, s + d - 1] += running
         end
+        if duration_counts
+            add_duration_counts!(counts, weights, j, s, D, t2)
+        end
+    end
+    return nothing
+end
+
+# Only the longest segment can reach `t2`, unless `max_duration` cuts it short, and it is then the
+# right-censored final sojourn.
+function add_duration_counts!((completed, censored), weights, j, s, D, t2)
+    is_censored = s + D - 1 == t2
+    for d in 1:(is_censored ? D - 1 : D)
+        completed[d, j] += weights[d]
+    end
+    if is_censored
+        censored[D, j] += weights[D]
     end
     return nothing
 end
@@ -227,9 +287,14 @@ function _forward_backward!(
     seq_ends::AbstractVectorOrNTuple{Int},
     k::Integer;
     transition_marginals::Bool=true,
+    duration_counts::Bool=false,
 ) where {R}
     (; γ, ξ, logL, forward, log_starts, log_after_end, log_from_start) = storage
     t1, t2 = seq_limits(seq_ends, k)
+    if duration_counts
+        fill!(storage.seq_completed_durations[k], zero(R))
+        fill!(storage.seq_censored_durations[k], zero(R))
+    end
 
     # Forward (fill log_ends, cum_log_obs, obs_zeros and logL)
     _forward!(forward, hsmm, obs_seq, control_seq, seq_ends, k; error_if_not_finite=true)
@@ -269,7 +334,7 @@ function _forward_backward!(
         else
             accumulate_incoming!(view(log_starts, :, s), log_ends, log_trans, s - 1)
         end
-        accumulate_segments!(storage, k, s, t1, t2, support)
+        accumulate_segments!(storage, k, s, t1, t2, support, duration_counts)
         if s > t1
             propagate_backward!(log_after_end, log_from_start, log_trans, s - 1)
             if transition_marginals
@@ -286,8 +351,27 @@ function _forward_backward!(
     return nothing
 end
 
+# The per-sequence counts have `min(max_duration, sequence length)` rows.
+function sum_duration_counts!(storage::HSMMForwardBackwardStorage{R}) where {R}
+    (; completed_durations, censored_durations) = storage
+    fill!(completed_durations, zero(R))
+    fill!(censored_durations, zero(R))
+    for (seq_completed, seq_censored) in
+        zip(storage.seq_completed_durations, storage.seq_censored_durations)
+        D = size(seq_completed, 1)
+        @views completed_durations[1:D, :] .+= seq_completed
+        @views censored_durations[1:D, :] .+= seq_censored
+    end
+    return nothing
+end
+
 """
 $(SIGNATURES)
+
+With `duration_counts=true`, also fill the expected duration counts
+`storage.completed_durations` and `storage.censored_durations`, from which the duration
+distributions can be re-estimated. This requires the corresponding buffers, see
+[`initialize_forward_backward`](@ref).
 """
 function forward_backward!(
     storage::HSMMForwardBackwardStorage,
@@ -296,20 +380,37 @@ function forward_backward!(
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
     transition_marginals::Bool=true,
+    duration_counts::Bool=false,
 )
+    @argcheck !duration_counts || has_duration_counts(storage)
     if seq_ends isa NTuple{1}
         for k in eachindex(seq_ends)
             _forward_backward!(
-                storage, hsmm, obs_seq, control_seq, seq_ends, k; transition_marginals
+                storage,
+                hsmm,
+                obs_seq,
+                control_seq,
+                seq_ends,
+                k;
+                transition_marginals,
+                duration_counts,
             )
         end
     else
         @threads for k in eachindex(seq_ends)
             _forward_backward!(
-                storage, hsmm, obs_seq, control_seq, seq_ends, k; transition_marginals
+                storage,
+                hsmm,
+                obs_seq,
+                control_seq,
+                seq_ends,
+                k;
+                transition_marginals,
+                duration_counts,
             )
         end
     end
+    duration_counts && sum_duration_counts!(storage)
     return nothing
 end
 

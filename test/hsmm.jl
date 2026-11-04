@@ -1473,6 +1473,147 @@ end
     end
 end
 
+#= Expected numbers of completed and right-censored sojourns of each duration, by summing the
+posterior weight of every state sequence over its segments. =#
+function brute_force_duration_counts(
+    hsmm, obs_seq, control_seq, N; max_duration=length(obs_seq)
+)
+    T = length(obs_seq)
+    D = min(max_duration, T)
+    completed = zeros(BigFloat, D, N)
+    censored = zeros(BigFloat, D, N)
+    Z = big(0.0)
+    for s in all_state_seqs(N, T)
+        longest_segment(s) <= max_duration || continue
+        p = exp(big(joint_logdensityof(hsmm, obs_seq, s, control_seq)))
+        Z += p
+        for (t_start, t_end) in StateSegments(s, 1, T)
+            counts = t_end == T ? censored : completed
+            counts[t_end - t_start + 1, s[t_start]] += p
+        end
+    end
+    return Float64.(completed ./ Z), Float64.(censored ./ Z)
+end
+
+function full_forward_backward_counts(
+    hsmm, obs_seq, control_seq=fill(nothing, length(obs_seq)); kwargs...
+)
+    seq_ends = get(kwargs, :seq_ends, (length(obs_seq),))
+    storage = initialize_forward_backward(
+        hsmm, obs_seq, control_seq; duration_counts=true, kwargs...
+    )
+    forward_backward!(storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true)
+    return storage
+end
+
+# Ensure `@allocated` sees concretely typed arguments.
+function call_forward_backward_counts!(storage, hsmm, obs_seq, control_seq, seq_ends)
+    return forward_backward!(
+        storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+    )
+end
+
+@testset "HSMM expected duration counts" begin
+    @testset "Expected duration counts match brute force" begin
+        rng = StableRNG(501)
+        for N in 2:3, T in 5:6, max_duration in (2, T)
+            hsmm = rand_hsmm(rng, N)
+            obs_seq = randn(rng, T)
+            control_seq = fill(nothing, T)
+            completed_bf, censored_bf = brute_force_duration_counts(
+                hsmm, obs_seq, control_seq, N; max_duration
+            )
+            storage = full_forward_backward_counts(
+                hsmm, obs_seq; seq_ends=(T,), max_duration
+            )
+            @test storage.completed_durations ≈ completed_bf atol = 1e-12
+            @test storage.censored_durations ≈ censored_bf atol = 1e-12
+        end
+
+        # The control at the start of a segment selects its duration distribution.
+        init = [0.6, 0.4]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Normal(0.0, 1.0), Normal(4.0, 1.0)]
+        durs = [[Geometric(0.15), Geometric(0.25)], [Geometric(0.85), Geometric(0.75)]]
+        hsmm = ControlledDurationHSMM(init, trans, dists, durs)
+        T = 6
+        obs_seq = randn(StableRNG(502), T)
+        control_seq = [1, 1, 2, 2, 1, 1]
+        completed_bf, censored_bf = brute_force_duration_counts(
+            hsmm, obs_seq, control_seq, 2
+        )
+        storage = full_forward_backward_counts(hsmm, obs_seq, control_seq; seq_ends=(T,))
+        @test storage.completed_durations ≈ completed_bf atol = 1e-12
+        @test storage.censored_durations ≈ censored_bf atol = 1e-12
+    end
+
+    @testset "Expected duration counts are consistent with the marginals" begin
+        rng = StableRNG(503)
+        hsmm = rand_hsmm(rng, 3)
+        lengths = (40, 1, 25, 60)
+        obs_seq = reduce(vcat, [rand(rng, hsmm, T).obs_seq for T in lengths])
+        seq_ends = cumsum(collect(lengths))
+        storage = full_forward_backward_counts(hsmm, obs_seq; seq_ends)
+        (; γ, ξ, completed_durations, censored_durations) = storage
+        D = size(completed_durations, 1)
+        @test D == maximum(lengths)
+        # Each sequence ends with exactly one censored sojourn.
+        @test sum(censored_durations) ≈ length(lengths)
+        for j in 1:3
+            # Every timestep spent in `j` belongs to exactly one sojourn.
+            @test sum((1:D) .* (completed_durations[:, j] .+ censored_durations[:, j])) ≈
+                sum(γ[j, :])
+            # Every completed sojourn is followed by a transition out of `j`.
+            @test sum(completed_durations[:, j]) ≈ sum(sum(ξₜ[j, :]) for ξₜ in ξ)
+        end
+        # The counts add up over sequences.
+        for k in eachindex(lengths)
+            t1, t2 = seq_limits(seq_ends, k)
+            separate = full_forward_backward_counts(
+                hsmm, obs_seq[t1:t2]; seq_ends=(t2 - t1 + 1,)
+            )
+            @test separate.completed_durations ≈ storage.seq_completed_durations[k]
+            @test separate.censored_durations ≈ storage.seq_censored_durations[k]
+        end
+        # Counting does not change the marginals.
+        storage_plain = full_forward_backward(hsmm, obs_seq; seq_ends)
+        @test storage_plain.γ == γ
+        @test storage_plain.ξ == ξ
+    end
+
+    @testset "Buffers are only allocated on request" begin
+        rng = StableRNG(511)
+        hsmm = rand_hsmm(rng, 2)
+        T = 30
+        obs_seq = rand(rng, hsmm, T).obs_seq
+        control_seq = fill(nothing, T)
+        seq_ends = (T,)
+
+        storage = initialize_forward_backward(hsmm, obs_seq, control_seq; seq_ends)
+        @test size(storage.completed_durations, 1) == 0
+        @test all(isempty, storage.seq_completed_durations)
+        @test_throws ArgumentError forward_backward!(
+            storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+        )
+    end
+
+    @testset "Allocations" begin
+        rng = StableRNG(512)
+        lengths = (30,)
+        seq_ends = lengths
+        hsmm = rand_hsmm(rng, 3)
+        obs_seq = rand(rng, hsmm, sum(lengths)).obs_seq
+        control_seq = fill(nothing, length(obs_seq))
+        storage = initialize_forward_backward(
+            hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+        )
+        call_forward_backward_counts!(storage, hsmm, obs_seq, control_seq, seq_ends)  # warm up
+        @test (@allocated call_forward_backward_counts!(
+            storage, hsmm, obs_seq, control_seq, seq_ends
+        )) == 0
+    end
+end
+
 @testset "HSMM type stability" begin
     rng = StableRNG(79)
     T = 20
@@ -1481,7 +1622,9 @@ end
     control_seq = fill(nothing, T)
     seq_ends = (T,)
     forward_storage = initialize_forward(hsmm, obs_seq, control_seq; seq_ends)
-    storage = initialize_forward_backward(hsmm, obs_seq, control_seq; seq_ends)
+    storage = initialize_forward_backward(
+        hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+    )
 
     @test_opt target_modules = (HiddenMarkovModels,) initialize_forward(
         hsmm, obs_seq, control_seq; seq_ends
@@ -1493,8 +1636,14 @@ end
     @test_opt target_modules = (HiddenMarkovModels,) initialize_forward_backward(
         hsmm, obs_seq, control_seq; seq_ends
     )
+    @test_opt target_modules = (HiddenMarkovModels,) initialize_forward_backward(
+        hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+    )
     @test_opt target_modules = (HiddenMarkovModels,) forward_backward!(
         storage, hsmm, obs_seq, control_seq; seq_ends
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) forward_backward!(
+        storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
     )
     @test_opt target_modules = (HiddenMarkovModels,) forward_backward(hsmm, obs_seq)
     @test_opt target_modules = (HiddenMarkovModels,) logdensityof(hsmm, obs_seq)
