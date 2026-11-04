@@ -54,13 +54,10 @@ function initialize_forward_backward(
         ξ[T] = zero(similar(trans, R))  # not used
     end
 
-    # Mass entering each state at `t`, and the likelihood of the observations after `t` given
-    # that a sojourn ends at `t` or starts at `t`.
     log_starts = Matrix{R}(undef, N, T)
     log_after_end = Matrix{R}(undef, N, T)
     log_from_start = Matrix{R}(undef, N, T)
 
-    # Posterior weights of the segments sharing a start, one entry per duration.
     seg_weights = Vector{Vector{R}}(undef, K)
     for k in 1:K
         seg_weights[k] = Vector{R}(undef, size(forward.log_dur[k], 1))
@@ -86,22 +83,18 @@ Fill `log_from_start[:, s]` and add the posterior weights of every segment start
 Summing the weights over durations from the longest down gives the mass of the segments still
 running at each timestep, so `γ` is built without subtracting probabilities.
 =#
-function accumulate_segments!(;
-    γ::AbstractMatrix{R},
-    log_from_start::AbstractMatrix{R},
-    weights::AbstractVector{R},
-    log_starts::AbstractMatrix{R},
-    log_after_end::AbstractMatrix{R},
-    cum_log_obs::AbstractMatrix{R},
-    obs_zeros::AbstractMatrix{Int},
-    log_dur::AbstractMatrix{R},
-    log_surv::AbstractMatrix{R},
+function accumulate_segments!(
+    storage::HSMMForwardBackwardStorage{R},
+    k::Integer,
     s::Integer,
     t1::Integer,
     t2::Integer,
     max_duration::Integer,
-    logL::R,
 ) where {R}
+    (; γ, log_starts, log_after_end, log_from_start, forward) = storage
+    (; cum_log_obs, obs_zeros) = forward
+    log_dur, log_surv = forward.log_dur[k], forward.log_surv[k]
+    weights, logL = storage.seg_weights[k], storage.logL[k]
     N = size(γ, 1)
     log_zero = convert(R, -Inf)
     D = min(max_duration, t2 - s + 1)
@@ -239,14 +232,13 @@ function _forward_backward!(
     _forward!(forward, hsmm, obs_seq, control_seq, seq_ends, k; error_if_not_finite=true)
     t1 > t2 && return nothing
 
-    (; log_ends, cum_log_obs, obs_zeros) = forward
-    log_dur = forward.log_dur[k]
-    log_surv = forward.log_surv[k]
-    weights = storage.seg_weights[k]
+    (; log_ends) = forward
+    log_dur, log_surv = forward.log_dur[k], forward.log_surv[k]
     max_duration = sequence_max_duration(forward.max_duration, t1, t2)
     uniform = uniform_controls(control_seq)
     log_init = log_initialization(hsmm)
 
+    # Backward (fill log_starts, log_from_start, log_after_end, γ and ξ)
     @views γ[:, t1:t2] .= zero(R)
     # No observations remain after the end of the sequence.
     @views log_after_end[:, t2] .= zero(R)
@@ -274,22 +266,7 @@ function _forward_backward!(
         else
             accumulate_incoming!(view(log_starts, :, s), log_ends, log_trans, s - 1)
         end
-        accumulate_segments!(;
-            γ,
-            log_from_start,
-            weights,
-            log_starts,
-            log_after_end,
-            cum_log_obs,
-            obs_zeros,
-            log_dur,
-            log_surv,
-            s,
-            t1,
-            t2,
-            max_duration=support,
-            logL=logL[k],
-        )
+        accumulate_segments!(storage, k, s, t1, t2, support)
         if s > t1
             propagate_backward!(log_after_end, log_from_start, log_trans, s - 1)
             if transition_marginals
@@ -299,7 +276,9 @@ function _forward_backward!(
             end
         end
     end
-    transition_marginals && (ξ[t2] .= zero(R))
+    if transition_marginals
+        ξ[t2] .= zero(R)
+    end
 
     return nothing
 end
