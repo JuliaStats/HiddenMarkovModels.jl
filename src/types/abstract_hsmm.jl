@@ -27,6 +27,7 @@ Any `AbstractHSMM` which satisfies the interface can be given to the following f
 - [`forward`](@ref)
 - [`viterbi`](@ref)
 - [`forward_backward`](@ref)
+- [`baum_welch`](@ref) (if `fit!` is implemented)
 
 """
 abstract type AbstractHSMM <: AbstractLatentStateModel end

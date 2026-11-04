@@ -10,12 +10,16 @@ $(TYPEDFIELDS)
 struct HSMMForwardBackwardStorage{R,M<:AbstractMatrix{R}}
     "posterior state marginals `γ[i,t] = ℙ(X[t]=i | Y[1:T])`"
     γ::Matrix{R}
-    "posterior transition marginals `ξ[t][i,j] = ℙ(X[t]=i, X[t+1]=j | Y[1:T])`, with zero diagonal"
+    "posterior transition marginals `ξ[t][i,j] = ℙ(X[t]=i, X[t+1]=j | Y[1:T])`, with zero diagonal (only allocated with `transition_marginals=true`)"
     ξ::Vector{M}
     "one loglikelihood per observation sequence"
     logL::Vector{R}
     "storage of the forward pass, whose filtered marginals `forward.α` remain available"
     forward::HSMMForwardStorage{R}
+    "expected number of completed sojourns in `j` lasting exactly `d` steps, `completed_durations[d,j] = Σ_s w[j,s,d]` over the segments ending before their sequence does, summed over sequences (only allocated with `duration_counts=true`)"
+    completed_durations::Matrix{R}
+    "expected number of right-censored final sojourns in `j` observed for `d` steps, `censored_durations[d,j] = w[j,T-d+1,d]` summed over sequences (only allocated with `duration_counts=true`)"
+    censored_durations::Matrix{R}
     # Internal buffers
     # `log_starts[j,t] = log ℙ(Y[1:t-1], a sojourn in j starts at t)`
     log_starts::Matrix{R}
@@ -26,10 +30,30 @@ struct HSMMForwardBackwardStorage{R,M<:AbstractMatrix{R}}
     # `seg_weights[k][d]`: posterior weight of the sojourn in the current state lasting `d`
     # steps from the current start, for sequence `k`
     seg_weights::Vector{Vector{R}}
+    # `seq_completed_durations[k][d,j]`: contribution of sequence `k` to `completed_durations`
+    seq_completed_durations::Vector{Matrix{R}}
+    # `seq_censored_durations[k][d,j]`: contribution of sequence `k` to `censored_durations`
+    seq_censored_durations::Vector{Matrix{R}}
+    # Whether the last call to `forward_backward!` filled `ξ` and the duration counts
+    filled_transition_marginals::RefValue{Bool}
+    filled_duration_counts::RefValue{Bool}
+end
+
+Base.eltype(::HSMMForwardBackwardStorage{R}) where {R} = R
+
+# Without `transition_marginals`, `ξ` stays unassigned; without `duration_counts`, the counts are `0 × 0`.
+function has_transition_marginals(storage::HSMMForwardBackwardStorage)
+    return !isempty(storage.ξ) && isassigned(storage.ξ, lastindex(storage.ξ))
+end
+function has_duration_counts(storage::HSMMForwardBackwardStorage)
+    return size(storage.completed_durations, 2) > 0
 end
 
 """
 $(SIGNATURES)
+
+`transition_marginals` and `duration_counts` allocate the buffers for `storage.ξ` and for the
+expected duration counts, which [`forward_backward!`](@ref) can only fill if they exist.
 """
 function initialize_forward_backward(
     hsmm::AbstractHSMM,
@@ -37,7 +61,8 @@ function initialize_forward_backward(
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
     max_duration::Int=longest_sequence(seq_ends),
-    transition_marginals=true,
+    transition_marginals::Bool=true,
+    duration_counts::Bool=false,
 )
     forward = initialize_forward(hsmm, obs_seq, control_seq; seq_ends, max_duration)
     N, T, K = length(hsmm), length(obs_seq), length(seq_ends)
@@ -62,12 +87,42 @@ function initialize_forward_backward(
 
     # Posterior weights of the segments sharing a start, one entry per duration.
     seg_weights = Vector{Vector{R}}(undef, K)
+    #= Expected duration counts, laid out like `log_dur` so that row `d` matches `p_j(d)`.
+    Summing `w[j,s,d]` over `s` while the segments are visited avoids an `N × T × D` array, and
+    per-sequence copies keep parallel calls independent. Without `duration_counts` they stay
+    `0 × 0`, so that plain smoothing does not pay for them. =#
+    seq_completed_durations = Vector{Matrix{R}}(undef, K)
+    seq_censored_durations = Vector{Matrix{R}}(undef, K)
     for k in 1:K
-        seg_weights[k] = Vector{R}(undef, size(forward.log_dur[k], 1))
+        D = size(forward.log_dur[k], 1)
+        D_counts, N_counts = duration_counts ? (D, N) : (0, 0)
+        seg_weights[k] = Vector{R}(undef, D)
+        seq_completed_durations[k] = zeros(R, D_counts, N_counts)
+        seq_censored_durations[k] = zeros(R, D_counts, N_counts)
     end
+    D_max, N_counts = if duration_counts
+        (min(max_duration, longest_sequence(seq_ends)), N)
+    else
+        (0, 0)
+    end
+    completed_durations = zeros(R, D_max, N_counts)
+    censored_durations = zeros(R, D_max, N_counts)
 
     return HSMMForwardBackwardStorage{R,M}(
-        γ, ξ, forward.logL, forward, log_starts, log_after_end, log_from_start, seg_weights
+        γ,
+        ξ,
+        forward.logL,
+        forward,
+        completed_durations,
+        censored_durations,
+        log_starts,
+        log_after_end,
+        log_from_start,
+        seg_weights,
+        seq_completed_durations,
+        seq_censored_durations,
+        Ref(false),
+        Ref(false),
     )
 end
 
@@ -85,9 +140,15 @@ end
 Fill `log_from_start[:, s]` and add the posterior weights of every segment starting at `s` to `γ`.
 Summing the weights over durations from the longest down gives the mass of the segments still
 running at each timestep, so `γ` is built without subtracting probabilities.
+
+With `duration_counts`, also add `w[j,s,d]` to the expected duration counts, keeping the
+right-censored final segment apart since its duration is only a lower bound on the sojourn.
 =#
 function accumulate_segments!(;
     γ::AbstractMatrix{R},
+    completed_durations::AbstractMatrix{R},
+    censored_durations::AbstractMatrix{R},
+    duration_counts::Bool,
     log_from_start::AbstractMatrix{R},
     weights::AbstractVector{R},
     log_starts::AbstractMatrix{R},
@@ -131,6 +192,16 @@ function accumulate_segments!(;
         for d in D:-1:1
             running += weights[d]
             γ[j, s + d - 1] += running
+        end
+        if duration_counts
+            # Only the longest segment can reach `t2`, unless `max_duration` cuts it short.
+            D_completed = s + D - 1 == t2 ? D - 1 : D
+            for d in 1:D_completed
+                completed_durations[d, j] += weights[d]
+            end
+            if D_completed < D
+                censored_durations[D, j] += weights[D]
+            end
         end
     end
     return nothing
@@ -231,9 +302,16 @@ function _forward_backward!(
     seq_ends::AbstractVectorOrNTuple{Int},
     k::Integer;
     transition_marginals::Bool=true,
+    duration_counts::Bool=false,
 ) where {R}
     (; γ, ξ, logL, forward, log_starts, log_after_end, log_from_start) = storage
+    completed_durations = storage.seq_completed_durations[k]
+    censored_durations = storage.seq_censored_durations[k]
     t1, t2 = seq_limits(seq_ends, k)
+    if duration_counts
+        fill!(completed_durations, zero(R))
+        fill!(censored_durations, zero(R))
+    end
 
     # Forward (fill log_ends, cum_log_obs, obs_zeros and logL)
     _forward!(forward, hsmm, obs_seq, control_seq, seq_ends, k; error_if_not_finite=true)
@@ -276,6 +354,9 @@ function _forward_backward!(
         end
         accumulate_segments!(;
             γ,
+            completed_durations,
+            censored_durations,
+            duration_counts,
             log_from_start,
             weights,
             log_starts,
@@ -304,8 +385,28 @@ function _forward_backward!(
     return nothing
 end
 
+# The per-sequence counts have `min(max_duration, sequence length)` rows.
+function sum_duration_counts!(storage::HSMMForwardBackwardStorage{R}) where {R}
+    (; completed_durations, censored_durations) = storage
+    fill!(completed_durations, zero(R))
+    fill!(censored_durations, zero(R))
+    for k in eachindex(storage.seq_completed_durations)
+        seq_completed = storage.seq_completed_durations[k]
+        seq_censored = storage.seq_censored_durations[k]
+        D = size(seq_completed, 1)
+        @views completed_durations[1:D, :] .+= seq_completed
+        @views censored_durations[1:D, :] .+= seq_censored
+    end
+    return nothing
+end
+
 """
 $(SIGNATURES)
+
+With `duration_counts=true`, also fill the expected duration counts
+`storage.completed_durations` and `storage.censored_durations` needed by [`fit!`](@ref).
+`transition_marginals` and `duration_counts` require the corresponding buffers, see
+[`initialize_forward_backward`](@ref).
 """
 function forward_backward!(
     storage::HSMMForwardBackwardStorage,
@@ -314,20 +415,43 @@ function forward_backward!(
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
     transition_marginals::Bool=true,
+    duration_counts::Bool=false,
 )
+    @argcheck !transition_marginals || has_transition_marginals(storage) "The storage has no transition marginals, use `initialize_forward_backward` with `transition_marginals=true`."
+    @argcheck !duration_counts || has_duration_counts(storage) "The storage has no duration counts, use `initialize_forward_backward` with `duration_counts=true`."
+    # Invalidate the flags first, so that an error below cannot leave them stale.
+    storage.filled_transition_marginals[] = false
+    storage.filled_duration_counts[] = false
     if seq_ends isa NTuple{1}
         for k in eachindex(seq_ends)
             _forward_backward!(
-                storage, hsmm, obs_seq, control_seq, seq_ends, k; transition_marginals
+                storage,
+                hsmm,
+                obs_seq,
+                control_seq,
+                seq_ends,
+                k;
+                transition_marginals,
+                duration_counts,
             )
         end
     else
         @threads for k in eachindex(seq_ends)
             _forward_backward!(
-                storage, hsmm, obs_seq, control_seq, seq_ends, k; transition_marginals
+                storage,
+                hsmm,
+                obs_seq,
+                control_seq,
+                seq_ends,
+                k;
+                transition_marginals,
+                duration_counts,
             )
         end
     end
+    duration_counts && sum_duration_counts!(storage)
+    storage.filled_transition_marginals[] = transition_marginals
+    storage.filled_duration_counts[] = duration_counts
     return nothing
 end
 

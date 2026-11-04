@@ -13,6 +13,38 @@ function baum_welch_has_converged(
     return false
 end
 
+#= One iteration: the E-step, then the M-step, returning the loglikelihood before the update.
+Each model type is paired with its own storage, so that `fit!` is only called on a matching
+pair. =#
+function baum_welch_iteration!(
+    fb_storage::ForwardBackwardStorage,
+    hmm::AbstractHMM,
+    obs_seq::AbstractVector,
+    control_seq::AbstractVector;
+    seq_ends::AbstractVectorOrNTuple{Int},
+)
+    forward_backward!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
+    logL = logdensityof(hmm) + sum(fb_storage.logL)
+    fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends)
+    return logL
+end
+
+# An HSMM also needs the expected duration counts to refit its duration distributions.
+function baum_welch_iteration!(
+    fb_storage::HSMMForwardBackwardStorage,
+    hsmm::AbstractHSMM,
+    obs_seq::AbstractVector,
+    control_seq::AbstractVector;
+    seq_ends::AbstractVectorOrNTuple{Int},
+)
+    forward_backward!(
+        fb_storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+    )
+    logL = logdensityof(hsmm) + sum(fb_storage.logL)
+    fit!(hsmm, fb_storage, obs_seq, control_seq; seq_ends)
+    return logL
+end
+
 """
 $(SIGNATURES)
 """
@@ -23,6 +55,28 @@ function baum_welch!(
     obs_seq::AbstractVector,
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
+    kwargs...,
+)
+    iteration!() = baum_welch_iteration!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
+    return baum_welch_loop!(iteration!, logL_evolution; kwargs...)
+end
+
+function baum_welch!(
+    fb_storage::HSMMForwardBackwardStorage,
+    logL_evolution::Vector,
+    hsmm::AbstractHSMM,
+    obs_seq::AbstractVector,
+    control_seq::AbstractVector;
+    seq_ends::AbstractVectorOrNTuple{Int},
+    kwargs...,
+)
+    iteration!() = baum_welch_iteration!(fb_storage, hsmm, obs_seq, control_seq; seq_ends)
+    return baum_welch_loop!(iteration!, logL_evolution; kwargs...)
+end
+
+function baum_welch_loop!(
+    iteration!,
+    logL_evolution::Vector;
     atol::Real,
     max_iterations::Integer,
     loglikelihood_increasing::Bool,
@@ -31,9 +85,7 @@ function baum_welch!(
     if progress
         @withprogress name = "Baum-Welch" begin
             for iter in 1:max_iterations
-                forward_backward!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
-                push!(logL_evolution, logdensityof(hmm) + sum(fb_storage.logL))
-                fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends)
+                push!(logL_evolution, iteration!())
                 @logprogress iter / max_iterations
                 if baum_welch_has_converged(logL_evolution; atol, loglikelihood_increasing)
                     break
@@ -42,9 +94,7 @@ function baum_welch!(
         end
     else
         for _ in 1:max_iterations
-            forward_backward!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
-            push!(logL_evolution, logdensityof(hmm) + sum(fb_storage.logL))
-            fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends)
+            push!(logL_evolution, iteration!())
             if baum_welch_has_converged(logL_evolution; atol, loglikelihood_increasing)
                 break
             end
@@ -96,6 +146,50 @@ function baum_welch(
     return hmm, logL_evolution
 end
 
+"""
+$(SIGNATURES)
+
+Apply the Baum-Welch algorithm to estimate the parameters of an HSMM on `obs_seq`, starting from `hsmm_guess`.
+The duration distributions are refitted from the expected sojourn durations, accounting exactly for the right-censored final sojourn of each sequence, see [`HiddenMarkovModels.fit_duration_in_sequence!`](@ref).
+
+Return a tuple `(hsmm_est, loglikelihood_evolution)` where `hsmm_est` is the estimated HSMM and `loglikelihood_evolution` is a vector of loglikelihood values, one per iteration of the algorithm.
+
+# Keyword arguments
+
+The same as for an HMM, plus `max_duration`, which limits the sojourn lengths considered as in [`forward`](@ref).
+"""
+function baum_welch(
+    hsmm_guess::AbstractHSMM,
+    obs_seq::AbstractVector,
+    control_seq::AbstractVector=Fill(nothing, length(obs_seq));
+    seq_ends::AbstractVectorOrNTuple{Int}=(length(obs_seq),),
+    max_duration::Int=longest_sequence(seq_ends),
+    atol=1e-5,
+    max_iterations=100,
+    loglikelihood_increasing=true,
+    progress::Bool=false,
+)
+    hsmm = deepcopy(hsmm_guess)
+    fb_storage = initialize_forward_backward(
+        hsmm, obs_seq, control_seq; seq_ends, max_duration, duration_counts=true
+    )
+    logL_evolution = eltype(fb_storage)[]
+    sizehint!(logL_evolution, max_iterations)
+    baum_welch!(
+        fb_storage,
+        logL_evolution,
+        hsmm,
+        obs_seq,
+        control_seq;
+        seq_ends,
+        atol,
+        max_iterations,
+        loglikelihood_increasing,
+        progress,
+    )
+    return hsmm, logL_evolution
+end
+
 ## Fallback
 
 function StatsAPI.fit!(
@@ -106,4 +200,14 @@ function StatsAPI.fit!(
     seq_ends::AbstractVectorOrNTuple{Int},
 )
     return fit!(hmm, fb_storage, obs_seq; seq_ends)
+end
+
+function StatsAPI.fit!(
+    hsmm::AbstractHSMM,
+    fb_storage::HSMMForwardBackwardStorage,
+    obs_seq::AbstractVector,
+    control_seq::AbstractVector;
+    seq_ends::AbstractVectorOrNTuple{Int},
+)
+    return fit!(hsmm, fb_storage, obs_seq; seq_ends)
 end

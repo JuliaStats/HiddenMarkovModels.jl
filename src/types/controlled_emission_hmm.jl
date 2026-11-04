@@ -174,35 +174,16 @@ function StatsAPI.fit!(
 )
     (; γ, ξ) = fb_storage
 
-    if seq_ends isa NTuple
-        for k in eachindex(seq_ends)
-            t1, t2 = seq_limits(seq_ends, k)
-            scratch = ξ[t2]
-            fill!(scratch, zero(eltype(scratch)))
-            for t in t1:(t2 - 1)
-                scratch .+= ξ[t]
-            end
-        end
-    else
-        @threads for k in eachindex(seq_ends)
-            t1, t2 = seq_limits(seq_ends, k)
-            scratch = ξ[t2]
-            fill!(scratch, zero(eltype(scratch)))
-            for t in t1:(t2 - 1)
-                scratch .+= ξ[t]
-            end
-        end
-    end
+    # Transitions first, since they check that some sequence is nonempty
+    fit_transitions!(hmm.trans, ξ, seq_ends)
 
     fill!(hmm.init, zero(eltype(hmm.init)))
-    fill!(hmm.trans, zero(eltype(hmm.trans)))
     for k in eachindex(seq_ends)
         t1, t2 = seq_limits(seq_ends, k)
+        t1 > t2 && continue  # empty sequence
         hmm.init .+= view(γ, :, t1)
-        hmm.trans .+= ξ[t2]
     end
     sum_to_one!(hmm.init)
-    foreach(sum_to_one!, eachrow(hmm.trans))
 
     # Fit emissions with control, must use raw dists directly
     for i in 1:length(hmm)

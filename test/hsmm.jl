@@ -3,6 +3,7 @@ using HiddenMarkovModels
 using HiddenMarkovModels:
     AbstractLatentStateModel,
     AbstractHSMM,
+    DurationFitError,
     HSMMForwardBackwardStorage,
     HSMMForwardStorage,
     HSMMViterbiStorage,
@@ -12,9 +13,13 @@ using HiddenMarkovModels:
     duration_logdensity_type,
     elementwise_log,
     Fill,
+    fit_transitions!,
     StateSegments,
+    fit_duration_by_imputation!,
+    fit_duration_in_sequence!,
     forward!,
     forward_backward!,
+    impute_censored_durations,
     initialize_forward,
     initialize_forward_backward,
     initialize_viterbi,
@@ -22,13 +27,29 @@ using HiddenMarkovModels:
     log_transition_matrix,
     valid_hsmm,
     viterbi!
-using Distributions: Binomial, Categorical, Geometric, Normal
+using Distributions:
+    Binomial,
+    UnivariateDistribution,
+    Categorical,
+    Geometric,
+    NegativeBinomial,
+    Normal,
+    Poisson,
+    ccdf,
+    logpdf,
+    mean,
+    params,
+    pdf,
+    std,
+    succprob
 using FiniteDifferences: FiniteDifferences, central_fdm
 using ForwardDiff: ForwardDiff
 using JET: @test_call, @test_opt
+using Optim: Optim, Brent, NelderMead, optimize
 using Random: AbstractRNG
-using SparseArrays: SparseMatrixCSC, nnz, sparse
+using SparseArrays: SparseMatrixCSC, findnz, nnz, nonzeros, sparse
 using StableRNGs: StableRNG
+using StatsAPI: StatsAPI
 using Test
 
 @testset "HSMM type" begin
@@ -1473,6 +1494,934 @@ end
     end
 end
 
+#= Expected numbers of completed and right-censored sojourns of each duration, by summing the
+posterior weight of every state sequence over its segments. =#
+function brute_force_duration_counts(
+    hsmm, obs_seq, control_seq, N; max_duration=length(obs_seq)
+)
+    T = length(obs_seq)
+    D = min(max_duration, T)
+    completed = zeros(BigFloat, D, N)
+    censored = zeros(BigFloat, D, N)
+    Z = big(0.0)
+    for s in all_state_seqs(N, T)
+        longest_segment(s) <= max_duration || continue
+        p = exp(big(joint_logdensityof(hsmm, obs_seq, s, control_seq)))
+        Z += p
+        for (t_start, t_end) in StateSegments(s, 1, T)
+            counts = t_end == T ? censored : completed
+            counts[t_end - t_start + 1, s[t_start]] += p
+        end
+    end
+    return Float64.(completed ./ Z), Float64.(censored ./ Z)
+end
+
+function full_forward_backward_counts(
+    hsmm, obs_seq, control_seq=fill(nothing, length(obs_seq)); kwargs...
+)
+    seq_ends = get(kwargs, :seq_ends, (length(obs_seq),))
+    storage = initialize_forward_backward(
+        hsmm, obs_seq, control_seq; duration_counts=true, kwargs...
+    )
+    forward_backward!(storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true)
+    return storage
+end
+
+# Ensure `@allocated` sees concretely typed arguments.
+function call_forward_backward_counts!(storage, hsmm, obs_seq, control_seq, seq_ends)
+    return forward_backward!(
+        storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+    )
+end
+
+function test_valid_transitions(trans)
+    N = size(trans, 1)
+    @test all(iszero(trans[i, i]) for i in 1:N)
+    @test all(>=(0), trans)
+    @test vec(sum(trans; dims=2)) ≈ ones(N)
+end
+
+# Non-decreasing up to a few ulps of rounding in the loglikelihood.
+function is_nondecreasing(logL_evolution; ulps=8)
+    tol = ulps * eps(maximum(abs, logL_evolution))
+    return all(>=(-tol), diff(logL_evolution))
+end
+
+#= Weighted MLE of a NegativeBinomial, which Distributions.jl does not provide. For a fixed `r`
+the MLE matches the mean, so only `log r` is optimized. =#
+function nb_with_mean(r, m)
+    return NegativeBinomial(r, r / (r + m))
+end
+
+function weighted_loglikelihood(dist, x, w)
+    return sum(w[k] * logpdf(dist, x[k]) for k in eachindex(x, w) if w[k] > 0)
+end
+
+function HiddenMarkovModels.fit_in_sequence!(
+    dists::AbstractVector{<:NegativeBinomial},
+    i::Integer,
+    x::AbstractVector{<:Integer},
+    w::AbstractVector,
+)
+    m = sum(w .* x) / sum(w)
+    res = optimize(
+        logr -> -weighted_loglikelihood(nb_with_mean(exp(logr), m), x, w),
+        log(1e-3),
+        log(1e4),
+        Brent();
+        abs_tol=1e-12,
+    )
+    candidate = nb_with_mean(exp(Optim.minimizer(res)), m)
+    # Never decrease the weighted loglikelihood, so that Baum-Welch stays monotone.
+    if weighted_loglikelihood(candidate, x, w) >= weighted_loglikelihood(dists[i], x, w)
+        dists[i] = candidate
+    end
+    return nothing
+end
+
+# The duration part of the expected complete-data loglikelihood.
+function duration_Q(dist, completed, censored)
+    Q = 0.0
+    for d in eachindex(completed, censored)
+        completed[d] > 0 && (Q += completed[d] * duration_logdensityof(dist, d))
+        censored[d] > 0 && (Q += censored[d] * duration_logsurvival(dist, d))
+    end
+    return Q
+end
+
+# Iterate the duration update to its fixed point.
+function iterate_duration_fit!(
+    fit_step!, dists, completed, censored; iterations=20_000, rtol=1e-13
+)
+    params_prev = params(dists[1])
+    for _ in 1:iterations
+        fit_step!(dists, 1, completed, censored)
+        all(isapprox.(params(dists[1]), params_prev; rtol)) && return true
+        params_prev = params(dists[1])
+    end
+    return false
+end
+
+# A duck-typed geometric duration distribution, fitted in place through the fallback.
+mutable struct MutableDuckGeometric
+    p::Float64
+end
+DensityInterface.DensityKind(::MutableDuckGeometric) = HasDensity()
+function DensityInterface.logdensityof(d::MutableDuckGeometric, k)
+    return k < 0 ? -Inf : log(d.p) + k * log1p(-d.p)
+end
+Base.rand(rng::AbstractRNG, d::MutableDuckGeometric) = rand(rng, Geometric(d.p))
+function HiddenMarkovModels.duration_logsurvival(d::MutableDuckGeometric, k::Integer)
+    return k <= 1 ? 0.0 : (k - 1) * log1p(-d.p)
+end
+function StatsAPI.fit!(d::MutableDuckGeometric, x::AbstractVector, w::AbstractVector)
+    d.p = sum(w) / (sum(w) + sum(w .* x))
+    return d
+end
+
+# A duration distribution whose weighted fit fails internally.
+struct FailingDuration
+    p::Float64
+end
+DensityInterface.DensityKind(::FailingDuration) = HasDensity()
+function DensityInterface.logdensityof(d::FailingDuration, k)
+    return k < 0 ? -Inf : log(d.p) + k * log1p(-d.p)
+end
+function HiddenMarkovModels.duration_logsurvival(d::FailingDuration, k::Integer)
+    return k <= 1 ? 0.0 : (k - 1) * log1p(-d.p)
+end
+function StatsAPI.fit!(::FailingDuration, ::AbstractVector, ::AbstractVector)
+    return error("custom fit failed")
+end
+
+# A duration distribution whose survival is NaN.
+struct NaNDuration end
+DensityInterface.DensityKind(::NaNDuration) = HasDensity()
+DensityInterface.logdensityof(::NaNDuration, k) = -1.0
+HiddenMarkovModels.duration_logsurvival(::NaNDuration, k::Integer) = NaN
+
+@testset "HSMM Baum-Welch" begin
+    @testset "Expected duration counts match brute force" begin
+        rng = StableRNG(501)
+        for N in 2:3, T in 5:6, max_duration in (2, T)
+            hsmm = rand_hsmm(rng, N)
+            obs_seq = randn(rng, T)
+            control_seq = fill(nothing, T)
+            completed_bf, censored_bf = brute_force_duration_counts(
+                hsmm, obs_seq, control_seq, N; max_duration
+            )
+            storage = full_forward_backward_counts(
+                hsmm, obs_seq; seq_ends=(T,), max_duration
+            )
+            @test storage.completed_durations ≈ completed_bf atol = 1e-12
+            @test storage.censored_durations ≈ censored_bf atol = 1e-12
+        end
+
+        # The control at the start of a segment selects its duration distribution.
+        init = [0.6, 0.4]
+        trans = [0.0 1.0; 1.0 0.0]
+        dists = [Normal(0.0, 1.0), Normal(4.0, 1.0)]
+        durs = [[Geometric(0.15), Geometric(0.25)], [Geometric(0.85), Geometric(0.75)]]
+        hsmm = ControlledDurationHSMM(init, trans, dists, durs)
+        T = 6
+        obs_seq = randn(StableRNG(502), T)
+        control_seq = [1, 1, 2, 2, 1, 1]
+        completed_bf, censored_bf = brute_force_duration_counts(
+            hsmm, obs_seq, control_seq, 2
+        )
+        storage = full_forward_backward_counts(hsmm, obs_seq, control_seq; seq_ends=(T,))
+        @test storage.completed_durations ≈ completed_bf atol = 1e-12
+        @test storage.censored_durations ≈ censored_bf atol = 1e-12
+    end
+
+    @testset "Expected duration counts are consistent with the marginals" begin
+        rng = StableRNG(503)
+        hsmm = rand_hsmm(rng, 3)
+        lengths = (40, 1, 25, 60)
+        obs_seq = reduce(vcat, [rand(rng, hsmm, T).obs_seq for T in lengths])
+        seq_ends = cumsum(collect(lengths))
+        storage = full_forward_backward_counts(hsmm, obs_seq; seq_ends)
+        (; γ, ξ, completed_durations, censored_durations) = storage
+        D = size(completed_durations, 1)
+        @test D == maximum(lengths)
+        # Each sequence ends with exactly one censored sojourn.
+        @test sum(censored_durations) ≈ length(lengths)
+        for j in 1:3
+            # Every timestep spent in `j` belongs to exactly one sojourn.
+            @test sum((1:D) .* (completed_durations[:, j] .+ censored_durations[:, j])) ≈
+                sum(γ[j, :])
+            # Every completed sojourn is followed by a transition out of `j`.
+            @test sum(completed_durations[:, j]) ≈ sum(sum(ξₜ[j, :]) for ξₜ in ξ)
+        end
+        # The counts add up over sequences.
+        for k in eachindex(lengths)
+            t1, t2 = seq_limits(seq_ends, k)
+            separate = full_forward_backward_counts(
+                hsmm, obs_seq[t1:t2]; seq_ends=(t2 - t1 + 1,)
+            )
+            @test separate.completed_durations ≈ storage.seq_completed_durations[k]
+            @test separate.censored_durations ≈ storage.seq_censored_durations[k]
+        end
+        # Counting does not change the marginals.
+        storage_plain = full_forward_backward(hsmm, obs_seq; seq_ends)
+        @test storage_plain.γ == γ
+        @test storage_plain.ξ == ξ
+    end
+
+    @testset "Loglikelihood increases" begin
+        # The censored sojourns are few compared to the completed ones, see the note below.
+        rng = StableRNG(504)
+        true_hsmm = rand_hsmm(rng, 3)
+        lengths = fill(150, 5)
+        obs_seq = reduce(vcat, [rand(rng, true_hsmm, T).obs_seq for T in lengths])
+        seq_ends = cumsum(lengths)
+        hsmm_guess = rand_hsmm(StableRNG(505), 3)
+        hsmm_est, logL_evolution = baum_welch(
+            hsmm_guess, obs_seq; seq_ends, max_duration=40, atol=1e-8
+        )
+        @test length(logL_evolution) > 2
+        @test is_nondecreasing(logL_evolution)
+        @test logL_evolution[end] > logL_evolution[1]
+        # The guess is copied rather than modified.
+        @test hsmm_guess.dur_dists == rand_hsmm(StableRNG(505), 3).dur_dists
+    end
+
+    @testset "Loglikelihood increases with heavy censoring" begin
+        #= Sequences of 2 to 5 mean sojourns, where most sojourns are cut off by the end of their
+        sequence. The default `loglikelihood_increasing=true` throws on any decrease. =#
+        families = (
+            μ -> Geometric(1 / μ),
+            μ -> Poisson(μ - 1),
+            μ -> NegativeBinomial(2.0, 2.0 / (2.0 + μ - 1)),
+        )
+        for make_dur in families, μ in (4, 8), ratio in (2, 5), seed in 1:4
+            rng = StableRNG(1000 * μ + 100 * ratio + seed)
+            T = ratio * μ
+            true_hsmm = HSMM(
+                [0.5, 0.5],
+                [0.0 1.0; 1.0 0.0],
+                [Normal(-1.5), Normal(1.5)],
+                [make_dur(float(μ)), make_dur(1.5 * μ)],
+            )
+            lengths = fill(T, div(40 * μ, T))
+            obs_seq = reduce(vcat, [rand(rng, true_hsmm, T).obs_seq for T in lengths])
+            seq_ends = cumsum(lengths)
+            hsmm_guess = HSMM(
+                [0.6, 0.4],
+                [0.0 1.0; 1.0 0.0],
+                [Normal(-1.0, 2.0), Normal(1.0, 2.0)],
+                [make_dur(2 * μ), make_dur(0.5 * μ)],
+            )
+            _, logL_evolution = baum_welch(hsmm_guess, obs_seq; seq_ends)
+            @test is_nondecreasing(logL_evolution)
+        end
+    end
+
+    @testset "Parameter recovery with short sequences" begin
+        # Sequences of 2.5 mean sojourns: leaving the censored sojourns out biased this by 10%.
+        rng = StableRNG(513)
+        dur_dists = [Poisson(7.0), Poisson(4.0)]
+        dists = [Normal(-2.0), Normal(2.0)]
+        true_hsmm = HSMM([0.5, 0.5], [0.0 1.0; 1.0 0.0], dists, dur_dists)
+        lengths = fill(20, 200)
+        obs_seq = reduce(vcat, [rand(rng, true_hsmm, T).obs_seq for T in lengths])
+        seq_ends = cumsum(lengths)
+        hsmm_guess = HSMM(
+            [0.6, 0.4],
+            [0.0 1.0; 1.0 0.0],
+            [Normal(-1.0, 1.5), Normal(1.0, 1.5)],
+            [Poisson(3.0), Poisson(10.0)],
+        )
+        hsmm_est, _ = baum_welch(hsmm_guess, obs_seq; seq_ends)
+        @test mean.(hsmm_est.dur_dists) ≈ mean.(dur_dists) rtol = 0.05
+        @test mean.(hsmm_est.dists) ≈ mean.(dists) atol = 0.1
+
+        # An overdispersed family, fitted through the imputation fallback.
+        rng = StableRNG(514)
+        dur_dists = [NegativeBinomial(2.0, 2.0 / 8.0), NegativeBinomial(2.0, 2.0 / 5.0)]
+        true_hsmm = HSMM([0.5, 0.5], [0.0 1.0; 1.0 0.0], dists, dur_dists)
+        lengths = fill(15, 400)
+        obs_seq = reduce(vcat, [rand(rng, true_hsmm, T).obs_seq for T in lengths])
+        seq_ends = cumsum(lengths)
+        hsmm_guess = HSMM(
+            [0.6, 0.4],
+            [0.0 1.0; 1.0 0.0],
+            [Normal(-1.0, 1.5), Normal(1.0, 1.5)],
+            [NegativeBinomial(1.0, 0.5), NegativeBinomial(1.0, 0.1)],
+        )
+        hsmm_est, logL_evolution = baum_welch(hsmm_guess, obs_seq; seq_ends)
+        @test is_nondecreasing(logL_evolution)
+        @test mean.(hsmm_est.dur_dists) ≈ mean.(dur_dists) rtol = 0.1
+        @test [d.r for d in hsmm_est.dur_dists] ≈ [2.0, 2.0] rtol = 0.5
+    end
+
+    @testset "Parameter recovery" begin
+        rng = StableRNG(506)
+        init = [0.5, 0.3, 0.2]
+        trans = [0.0 0.7 0.3; 0.4 0.0 0.6; 0.5 0.5 0.0]
+        dists = [Normal(-3.0), Normal(0.0), Normal(3.0)]
+        # Sojourns of mean 5, 2 and 8 steps.
+        dur_dists = [Poisson(4.0), Poisson(1.0), Poisson(7.0)]
+        true_hsmm = HSMM(init, trans, dists, dur_dists)
+        lengths = fill(200, 50)
+        obs_seq = reduce(vcat, [rand(rng, true_hsmm, T).obs_seq for T in lengths])
+        seq_ends = cumsum(lengths)
+
+        hsmm_guess = HSMM(
+            fill(1 / 3, 3),
+            [0.0 0.5 0.5; 0.5 0.0 0.5; 0.5 0.5 0.0],
+            [Normal(-2.0), Normal(0.5), Normal(2.0)],
+            [Poisson(2.0), Poisson(2.0), Poisson(2.0)],
+        )
+        hsmm_est, logL_evolution = baum_welch(
+            hsmm_guess, obs_seq; seq_ends, max_duration=30
+        )
+        @test logL_evolution[end] > logL_evolution[1]
+        @test hsmm_est.init ≈ init atol = 0.15
+        @test all(isapprox.(hsmm_est.trans, trans; atol=0.05))
+        test_valid_transitions(hsmm_est.trans)
+        @test mean.(hsmm_est.dists) ≈ mean.(dists) atol = 0.1
+        @test std.(hsmm_est.dists) ≈ std.(dists) atol = 0.1
+        @test mean.(hsmm_est.dur_dists) ≈ mean.(dur_dists) rtol = 0.1
+    end
+
+    @testset "Equivalence with an HMM under geometric sojourns" begin
+        hmm_init = [0.5, 0.3, 0.2]
+        hmm_trans = [0.7 0.2 0.1; 0.3 0.5 0.2; 0.25 0.25 0.5]
+        hmm_dists = [Normal(0.0), Normal(5.0), Normal(10.0)]
+        hmm = HMM(hmm_init, hmm_trans, hmm_dists)
+        N = length(hmm_init)
+        hsmm_trans = [
+            i == j ? 0.0 : hmm_trans[i, j] / (1 - hmm_trans[i, i]) for i in 1:N, j in 1:N
+        ]
+        hsmm_durs = [Geometric(1 - hmm_trans[i, i]) for i in 1:N]
+        hsmm = HSMM(hmm_init, hsmm_trans, hmm_dists, hsmm_durs)
+
+        #= The HMM self-transition update counts the steps of the censored final sojourn except
+        its last one, which is exactly the censored geometric MLE, so both algorithms coincide.
+        Short sequences make the censored sojourns matter. =#
+        for lengths in ((80, 120), Tuple(fill(6, 30)))
+            obs_seq = reduce(
+                vcat,
+                [rand(StableRNG(T + k), hmm, T).obs_seq for (k, T) in enumerate(lengths)],
+            )
+            seq_ends = cumsum(collect(lengths))
+            for max_iterations in (1, 10)
+                hmm_est, logL_hmm = baum_welch(hmm, obs_seq; seq_ends, max_iterations)
+                hsmm_est, logL_hsmm = baum_welch(hsmm, obs_seq; seq_ends, max_iterations)
+                @test logL_hsmm ≈ logL_hmm
+                @test hsmm_est.init ≈ hmm_est.init
+                A = hmm_est.trans
+                @test hsmm_est.trans ≈
+                    [i == j ? 0.0 : A[i, j] / (1 - A[i, i]) for i in 1:N, j in 1:N]
+                @test succprob.(hsmm_est.dur_dists) ≈ [1 - A[i, i] for i in 1:N]
+                @test mean.(hsmm_est.dists) ≈ mean.(hmm_est.dists)
+                @test std.(hsmm_est.dists) ≈ std.(hmm_est.dists)
+            end
+        end
+    end
+
+    @testset "Multiple sequences" begin
+        rng = StableRNG(507)
+        true_hsmm = rand_hsmm(rng, 2)
+        lengths = [30, 1, 45, 20]
+        obs_seq = reduce(vcat, [rand(rng, true_hsmm, T).obs_seq for T in lengths])
+        seq_ends = cumsum(lengths)
+        hsmm_guess = rand_hsmm(StableRNG(508), 2)
+        # Vectors of sequence ends go through the threaded loops, tuples do not.
+        hsmm_vec, logL_vec = baum_welch(hsmm_guess, obs_seq; seq_ends, max_iterations=10)
+        hsmm_tup, logL_tup = baum_welch(
+            hsmm_guess, obs_seq; seq_ends=Tuple(seq_ends), max_iterations=10
+        )
+        @test logL_vec ≈ logL_tup
+        @test hsmm_vec.init ≈ hsmm_tup.init
+        @test hsmm_vec.trans ≈ hsmm_tup.trans
+        @test mean.(hsmm_vec.dists) ≈ mean.(hsmm_tup.dists)
+        @test std.(hsmm_vec.dists) ≈ std.(hsmm_tup.dists)
+        @test succprob.(hsmm_vec.dur_dists) ≈ succprob.(hsmm_tup.dur_dists)
+        @test is_nondecreasing(logL_vec)
+    end
+
+    @testset "Sparse transition matrix" begin
+        # Structural zeros must stay impossible transitions.
+        init = [0.5, 0.3, 0.2]
+        trans = [0.0 0.5 0.5; 1.0 0.0 0.0; 1.0 0.0 0.0]
+        dists = [Normal(0.0), Normal(3.0), Normal(6.0)]
+        durs = [Geometric(0.3) for _ in 1:3]
+        true_hsmm = HSMM(init, sparse(trans), dists, durs)
+        rng = StableRNG(509)
+        lengths = fill(100, 3)
+        obs_seq = reduce(vcat, [rand(rng, true_hsmm, T).obs_seq for T in lengths])
+        seq_ends = cumsum(lengths)
+
+        guess_trans = [0.0 0.3 0.7; 1.0 0.0 0.0; 1.0 0.0 0.0]
+        guess_dists = [Normal(0.5), Normal(2.5), Normal(5.0)]
+        guess_durs = [Geometric(0.5) for _ in 1:3]
+        hsmm_dense, logL_dense = baum_welch(
+            HSMM(init, guess_trans, guess_dists, guess_durs), obs_seq; seq_ends
+        )
+        hsmm_sparse, logL_sparse = baum_welch(
+            HSMM(init, sparse(guess_trans), guess_dists, guess_durs), obs_seq; seq_ends
+        )
+        @test is_nondecreasing(logL_sparse)
+        @test hsmm_sparse.trans isa SparseMatrixCSC
+        @test nnz(hsmm_sparse.trans) == nnz(sparse(trans))
+        @test hsmm_sparse.logtrans isa SparseMatrixCSC
+        @test nnz(hsmm_sparse.logtrans) == nnz(sparse(trans))
+        @test logL_sparse ≈ logL_dense
+        @test hsmm_sparse.trans ≈ hsmm_dense.trans
+        @test succprob.(hsmm_sparse.dur_dists) ≈ succprob.(hsmm_dense.dur_dists)
+        test_valid_transitions(hsmm_sparse.trans)
+        @test hsmm_sparse.trans[2, 3] == 0
+        @test hsmm_sparse.trans[3, 2] == 0
+    end
+
+    @testset "fit! keeps a valid transition matrix" begin
+        rng = StableRNG(510)
+        hsmm = rand_hsmm(rng, 4)
+        lengths = [50, 70]
+        obs_seq = reduce(vcat, [rand(rng, hsmm, T).obs_seq for T in lengths])
+        seq_ends = cumsum(lengths)
+        control_seq = fill(nothing, length(obs_seq))
+        storage = full_forward_backward_counts(hsmm, obs_seq; seq_ends)
+        fit!(hsmm, storage, obs_seq, control_seq; seq_ends)
+        test_valid_transitions(hsmm.trans)
+        @test valid_hsmm(hsmm)
+        @test hsmm.loginit ≈ log.(hsmm.init)
+        @test hsmm.logtrans ≈ log.(hsmm.trans)
+    end
+
+    @testset "fit_transitions!" begin
+        trans = [0.0 0.5 0.5; 0.3 0.0 0.7; 0.6 0.4 0.0]
+        # Two sequences of 3 and 2 timesteps, state 3 is never left.
+        ξ_seqs = [
+            [
+                [0.0 1.0 0.0; 0.0 0.0 0.0; 0.0 0.0 0.0],
+                [0.0 0.0 0.0; 0.0 0.0 0.5; 0.0 0.0 0.0],
+            ],
+            [[0.0 0.0 2.0; 0.0 0.0 0.0; 0.0 0.0 0.0]],
+        ]
+        expected = [0.0 1/3 2/3; 0.0 0.0 1.0; 0.6 0.4 0.0]
+        function marginals(make)
+            ξ = [make(zeros(3, 3)) for _ in 1:5]
+            ξ[1] = make(ξ_seqs[1][1])
+            ξ[2] = make(ξ_seqs[1][2])
+            ξ[4] = make(ξ_seqs[2][1])
+            return ξ
+        end
+
+        dense = copy(trans)
+        fit_transitions!(dense, marginals(identity), [0, 3, 5])
+        @test dense ≈ expected
+
+        sparse_trans = sparse(trans)
+        rows, cols, _ = findnz(sparse_trans)
+        # Marginals sharing the pattern of `trans`, as allocated by `forward_backward`.
+        function with_pattern(ξ_denseₜ)
+            ξₜ = copy(sparse_trans)
+            nonzeros(ξₜ) .= ξ_denseₜ[CartesianIndex.(rows, cols)]
+            return ξₜ
+        end
+        ξ_sparse = marginals(with_pattern)
+        fit_transitions!(sparse_trans, ξ_sparse, (3, 5))
+        @test sparse_trans isa SparseMatrixCSC
+        @test nnz(sparse_trans) == nnz(sparse(trans))
+        @test sparse_trans ≈ expected
+
+        # Marginals with another sparsity pattern take the generic path.
+        sparse_trans = sparse(trans)
+        fit_transitions!(sparse_trans, marginals(sparse), (3, 5))
+        @test nnz(sparse_trans) == nnz(sparse(trans))
+        @test sparse_trans ≈ expected
+
+        @test_throws ArgumentError fit_transitions!(
+            copy(trans), marginals(identity), (0, 0)
+        )
+    end
+
+    @testset "fit! requires fresh transition marginals and duration counts" begin
+        rng = StableRNG(511)
+        hsmm = rand_hsmm(rng, 2)
+        T = 30
+        obs_seq = rand(rng, hsmm, T).obs_seq
+        control_seq = fill(nothing, T)
+        seq_ends = (T,)
+        message(f) =
+            try
+                f()
+                ""
+            catch err
+                sprint(showerror, err)
+            end
+
+        # The duration counts are only allocated on request.
+        storage = initialize_forward_backward(hsmm, obs_seq, control_seq; seq_ends)
+        @test size(storage.completed_durations, 1) == 0
+        @test all(isempty, storage.seq_completed_durations)
+        @test occursin(
+            "duration_counts=true",
+            message(
+                () -> forward_backward!(
+                    storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+                ),
+            ),
+        )
+        forward_backward!(storage, hsmm, obs_seq, control_seq; seq_ends)
+        @test occursin(
+            "duration_counts=true", message(() -> fit!(hsmm, storage, obs_seq; seq_ends))
+        )
+
+        # Stale counts from an earlier call are not used.
+        storage = initialize_forward_backward(
+            hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+        )
+        forward_backward!(
+            storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+        )
+        forward_backward!(storage, hsmm, obs_seq, control_seq; seq_ends)
+        @test occursin(
+            "duration_counts=true", message(() -> fit!(hsmm, storage, obs_seq; seq_ends))
+        )
+        forward_backward!(
+            storage,
+            hsmm,
+            obs_seq,
+            control_seq;
+            seq_ends,
+            transition_marginals=false,
+            duration_counts=true,
+        )
+        @test occursin(
+            "transition_marginals=true",
+            message(() -> fit!(hsmm, storage, obs_seq; seq_ends)),
+        )
+        forward_backward!(
+            storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+        )
+        fit!(hsmm, storage, obs_seq; seq_ends)
+        @test valid_hsmm(hsmm)
+        # `fit!` sums the transition marginals in place, so they cannot be reused.
+        @test occursin(
+            "transition_marginals=true",
+            message(() -> fit!(hsmm, storage, obs_seq; seq_ends)),
+        )
+
+        # Without a nonempty sequence, `fit!` throws before modifying the model.
+        forward_backward!(
+            storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+        )
+        hsmm_before = deepcopy(hsmm)
+        ξ_before = deepcopy(storage.ξ)
+        @test_throws ArgumentError fit!(hsmm, storage, obs_seq; seq_ends=[0, 0])
+        @test hsmm.init == hsmm_before.init
+        @test hsmm.loginit == hsmm_before.loginit
+        @test hsmm.trans == hsmm_before.trans
+        @test storage.ξ == ξ_before
+
+        # Storage without transition marginals cannot provide them.
+        storage = initialize_forward_backward(
+            hsmm,
+            obs_seq,
+            control_seq;
+            seq_ends,
+            transition_marginals=false,
+            duration_counts=true,
+        )
+        @test occursin(
+            "transition_marginals=true",
+            message(() -> forward_backward!(storage, hsmm, obs_seq, control_seq; seq_ends)),
+        )
+        forward_backward!(
+            storage,
+            hsmm,
+            obs_seq,
+            control_seq;
+            seq_ends,
+            transition_marginals=false,
+            duration_counts=true,
+        )
+        @test occursin(
+            "transition_marginals=true",
+            message(() -> fit!(hsmm, storage, obs_seq; seq_ends)),
+        )
+    end
+
+    @testset "Empty sequences" begin
+        rng = StableRNG(520)
+        true_hsmm = rand_hsmm(rng, 3)
+        lengths = [12, 7, 20]
+        obs_seq = reduce(vcat, [rand(rng, true_hsmm, T).obs_seq for T in lengths])
+        seq_ends = cumsum(lengths)
+        hsmm_guess = rand_hsmm(StableRNG(521), 3)
+        reference, logL_reference = baum_welch(hsmm_guess, obs_seq; seq_ends)
+        for seq_ends_empty in
+            ([0, 12, 12, 19, 39, 39], (0, 12, 19, 19, 39), [12, 12, 12, 19, 39])
+            hsmm_est, logL_evolution = baum_welch(
+                hsmm_guess, obs_seq; seq_ends=seq_ends_empty, max_duration=20
+            )
+            @test logL_evolution ≈ logL_reference
+            @test hsmm_est.init ≈ reference.init
+            @test hsmm_est.trans ≈ reference.trans
+            @test mean.(hsmm_est.dists) ≈ mean.(reference.dists)
+            @test succprob.(hsmm_est.dur_dists) ≈ succprob.(reference.dur_dists)
+        end
+    end
+
+    @testset "Allocations" begin
+        rng = StableRNG(512)
+        lengths = (30,)
+        seq_ends = lengths
+        hsmm = rand_hsmm(rng, 3)
+        obs_seq = rand(rng, hsmm, sum(lengths)).obs_seq
+        control_seq = fill(nothing, length(obs_seq))
+        storage = initialize_forward_backward(
+            hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+        )
+        call_forward_backward_counts!(storage, hsmm, obs_seq, control_seq, seq_ends)  # warm up
+        @test (@allocated call_forward_backward_counts!(
+            storage, hsmm, obs_seq, control_seq, seq_ends
+        )) == 0
+    end
+end
+
+@testset "HSMM censored duration M-step" begin
+    completed = [0.0, 3.0, 5.5, 4.0, 2.5, 1.0, 0.5, 0.25, 0.1, 0.05]
+    censored = [0.2, 0.5, 0.3, 0.4, 0.6, 0.1, 0.0, 0.9, 0.0, 0.3]
+    D = length(completed)
+
+    @testset "Geometric closed form" begin
+        q = sum(completed) / (sum((1:D) .* completed) + sum((0:(D - 1)) .* censored))
+        dists = [Geometric(0.5)]
+        fit_duration_in_sequence!(dists, 1, completed, censored)
+        @test succprob(dists[1]) ≈ q
+        res = optimize(
+            logit_q -> -duration_Q(Geometric(1 / (1 + exp(-logit_q))), completed, censored),
+            -20.0,
+            20.0,
+            Brent();
+            abs_tol=1e-12,
+        )
+        @test q ≈ 1 / (1 + exp(-Optim.minimizer(res))) rtol = 1e-6
+        # Iterating the generic fallback converges to the same maximizer.
+        dists_fallback = [Geometric(0.5)]
+        @test iterate_duration_fit!(
+            fit_duration_by_imputation!, dists_fallback, completed, censored
+        )
+        @test succprob(dists_fallback[1]) ≈ q rtol = 1e-8
+
+        dists32 = [Geometric(0.5f0)]
+        fit_duration_in_sequence!(dists32, 1, Float32.(completed), Float32.(censored))
+        @test dists32[1] isa Geometric{Float32}
+        @test succprob(dists32[1]) ≈ q rtol = 1e-5
+
+        # If every sojourn lasts one step, stay a valid distribution just below `q = 1`.
+        dists1 = [Geometric(0.5)]
+        fit_duration_in_sequence!(dists1, 1, [2.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+        @test succprob(dists1[1]) == prevfloat(1.0)
+        @test isfinite(duration_logdensityof(dists1[1], 1))
+    end
+
+    @testset "The imputation fallback maximizes Q" begin
+        dists = [Poisson(2.0)]
+        Q_evolution = [duration_Q(dists[1], completed, censored)]
+        for _ in 1:20
+            fit_duration_in_sequence!(dists, 1, completed, censored)
+            push!(Q_evolution, duration_Q(dists[1], completed, censored))
+        end
+        @test is_nondecreasing(Q_evolution)
+        @test iterate_duration_fit!(fit_duration_in_sequence!, dists, completed, censored)
+        res = optimize(
+            logλ -> -duration_Q(Poisson(exp(logλ)), completed, censored),
+            log(1e-3),
+            log(1e3),
+            Brent();
+            abs_tol=1e-12,
+        )
+        @test mean(dists[1]) ≈ exp(Optim.minimizer(res)) rtol = 1e-6
+
+        dists = [nb_with_mean(1.0, 3.0)]
+        @test iterate_duration_fit!(
+            fit_duration_in_sequence!, dists, completed, censored; rtol=1e-9
+        )
+        res = optimize(
+            θ -> -duration_Q(nb_with_mean(exp(θ[1]), exp(θ[2])), completed, censored),
+            [0.0, log(3.0)],
+            NelderMead(),
+            Optim.Options(; g_tol=1e-14, iterations=10_000),
+        )
+        r_opt, m_opt = exp.(Optim.minimizer(res))
+        @test dists[1].r ≈ r_opt rtol = 1e-3
+        @test mean(dists[1]) ≈ m_opt rtol = 1e-4
+        @test duration_Q(dists[1], completed, censored) ≈ -Optim.minimum(res) rtol = 1e-8
+    end
+
+    @testset "Without completed sojourns" begin
+        #= `fit!` keeps the distribution of such a state, so the provided methods refuse to fit
+        it rather than running off to an infinite mean. =#
+        only_censored = [0.0, 0.0, 1.0, 0.0, 0.5, 0.0]
+        for dists in ([Geometric(0.3)], [Poisson(2.0)], [DuckGeometric(0.3)])
+            old = dists[1]
+            for censored_counts in (zeros(6), only_censored)
+                @test_throws ArgumentError fit_duration_in_sequence!(
+                    dists, 1, zeros(6), censored_counts
+                )
+                @test dists[1] == old
+            end
+        end
+    end
+
+    @testset "A state seen only in censored sojourns" begin
+        #= State 2 only emits 2 and state 1 only emits 1, and every sequence ends in state 2,
+        so all the sojourns of state 2 are censored. =#
+        rng = StableRNG(522)
+        obs_seq = Int[]
+        seq_ends = Int[]
+        for _ in 1:20
+            append!(obs_seq, fill(1, rand(rng, 2:8)))
+            append!(obs_seq, fill(2, rand(rng, 1:6)))
+            push!(seq_ends, length(obs_seq))
+        end
+        dists = [Categorical([1.0, 0.0]), Categorical([0.0, 1.0])]
+        for dur_dists in ([Poisson(2.0), Poisson(3.0)], [Geometric(0.5), Geometric(0.3)])
+            hsmm_guess = HSMM([0.5, 0.5], [0.0 1.0; 1.0 0.0], dists, dur_dists)
+            hsmm_est, logL_evolution = baum_welch(
+                hsmm_guess,
+                obs_seq;
+                seq_ends,
+                max_iterations=100,
+                atol=-Inf,
+                loglikelihood_increasing=false,
+            )
+            @test length(logL_evolution) == 100
+            @test is_nondecreasing(logL_evolution)
+            @test hsmm_est.dur_dists[2] == dur_dists[2]
+            @test hsmm_est.dur_dists[1] != dur_dists[1]
+            @test hsmm_est.trans == [0.0 1.0; 1.0 0.0]
+            @test hsmm_est.init == [1.0, 0.0]
+        end
+    end
+
+    @testset "Float32 durations" begin
+        dists64 = [Poisson(2.0)]
+        fit_duration_in_sequence!(dists64, 1, completed, censored)
+        dists32 = [Poisson(2.0f0)]
+        fit_duration_in_sequence!(dists32, 1, Float32.(completed), Float32.(censored))
+        @test dists32[1] isa Poisson{Float32}
+        @test mean(dists32[1]) ≈ mean(dists64[1]) rtol = 1e-5
+    end
+
+    @testset "Float32 durations in a vector of mixed families" begin
+        dists64 = [Poisson(2.0)]
+        fit_duration_in_sequence!(dists64, 1, completed, censored)
+        dists = UnivariateDistribution[Poisson(2.0f0), Geometric(0.5f0)]
+        fit_duration_in_sequence!(dists, 1, Float32.(completed), Float32.(censored))
+        @test dists[1] isa Poisson
+        @test mean(dists[1]) ≈ mean(dists64[1]) rtol = 1e-5
+        # A family without a weighted fit is still reported as such.
+        dists = UnivariateDistribution[Binomial(20, 0.5f0), Geometric(0.5f0)]
+        @test_throws DurationFitError fit_duration_in_sequence!(
+            dists, 1, Float32.(completed), Float32.(censored)
+        )
+    end
+
+    @testset "Errors of a custom weighted fit propagate" begin
+        dists = [FailingDuration(0.5)]
+        @test_throws "custom fit failed" fit_duration_in_sequence!(
+            dists, 1, completed, censored
+        )
+    end
+
+    @testset "Bounded support" begin
+        dist = Binomial(4, 0.5)  # sojourns of 1 to 5 steps
+        w = impute_censored_durations(dist, [1.0, 2.0, 0.0], [0.0, 0.0, 1.0])
+        @test length(w) == 5
+        @test w[1:2] == [1.0, 2.0]
+        @test w[3:5] ≈ [pdf(dist, d - 1) / ccdf(dist, 1) for d in 3:5]
+        @test sum(w) ≈ 4.0
+        # A censored sojourn beyond the support cannot come from the E-step.
+        @test_throws ArgumentError impute_censored_durations(
+            dist, zeros(7), [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+        )
+        # Unless its weight is rounding noise.
+        @test impute_censored_durations(
+            dist, [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1e-20]
+        ) == [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    end
+
+    @testset "Imputed tail" begin
+        two_sojourns = ([1.0, 0.0], [0.0, 1.0])
+        dist = Geometric(0.1)
+        w = impute_censored_durations(dist, two_sojourns...)
+        # The tail is followed until the remaining mass is below eps.
+        @test sum(w) ≈ 2.0 atol = 1e-13
+        @test w[3:10] ≈ [pdf(dist, d - 1) / ccdf(dist, 0) for d in 3:10]
+        w32 = impute_censored_durations(
+            Geometric(0.1f0), Float32.(two_sojourns[1]), Float32.(two_sojourns[2])
+        )
+        @test eltype(w32) == Float32
+        @test length(w32) < length(w)
+        @test sum(w32) ≈ 2.0f0
+        # Never truncated silently.
+        @test_throws ArgumentError impute_censored_durations(
+            Geometric(1e-3), two_sojourns...; max_imputed_duration=100
+        )
+        @test_throws ArgumentError impute_censored_durations(NaNDuration(), two_sojourns...)
+    end
+
+    @testset "Duration types without a weighted fit" begin
+        for dists in ([DuckGeometric(0.3)], [Binomial(4, 0.5)])
+            err = try
+                fit_duration_in_sequence!(dists, 1, [1.0, 2.0, 0.0], [0.0, 0.0, 1.0])
+                nothing
+            catch e
+                e
+            end
+            @test err isa DurationFitError
+            @test occursin("fit_duration_in_sequence!", sprint(showerror, err))
+        end
+    end
+
+    @testset "Custom duration type through the fallback" begin
+        q = sum(completed) / (sum((1:D) .* completed) + sum((0:(D - 1)) .* censored))
+        dists = [MutableDuckGeometric(0.5)]
+        for _ in 1:2000
+            fit_duration_in_sequence!(dists, 1, completed, censored)
+        end
+        @test dists[1].p ≈ q rtol = 1e-8
+
+        rng = StableRNG(516)
+        true_hsmm = HSMM(
+            [0.5, 0.5],
+            [0.0 1.0; 1.0 0.0],
+            [Normal(-2.0), Normal(2.0)],
+            [Geometric(0.3), Geometric(0.15)],
+        )
+        lengths = fill(10, 100)
+        obs_seq = reduce(vcat, [rand(rng, true_hsmm, T).obs_seq for T in lengths])
+        seq_ends = cumsum(lengths)
+        dists = [Normal(-1.0), Normal(1.0)]
+        duck_guess = HSMM(
+            [0.5, 0.5],
+            [0.0 1.0; 1.0 0.0],
+            dists,
+            [MutableDuckGeometric(0.5), MutableDuckGeometric(0.5)],
+        )
+        geom_guess = HSMM(
+            [0.5, 0.5], [0.0 1.0; 1.0 0.0], dists, [Geometric(0.5), Geometric(0.5)]
+        )
+        duck_est, duck_logL = baum_welch(
+            duck_guess, obs_seq; seq_ends, atol=1e-10, max_iterations=1000
+        )
+        geom_est, geom_logL = baum_welch(
+            geom_guess, obs_seq; seq_ends, atol=1e-10, max_iterations=1000
+        )
+        @test is_nondecreasing(duck_logL)
+        @test duck_guess.dur_dists[1].p == 0.5
+        # Both reach the same maximum likelihood estimate.
+        @test [d.p for d in duck_est.dur_dists] ≈ succprob.(geom_est.dur_dists) rtol = 1e-4
+        @test duck_logL[end] ≈ geom_logL[end]
+    end
+
+    @testset "Unvisited state" begin
+        # State 3 can never be entered, so its posterior weight is exactly zero.
+        init = [0.5, 0.5, 0.0]
+        trans = [0.0 1.0 0.0; 1.0 0.0 0.0; 0.5 0.5 0.0]
+        dists = [Normal(-2.0), Normal(2.0), Normal(10.0)]
+        durs = [Poisson(3.0), Poisson(5.0), Poisson(1.0)]
+        hsmm = HSMM(init, trans, dists, durs)
+        rng = StableRNG(517)
+        lengths = fill(30, 10)
+        obs_seq = reduce(vcat, [rand(rng, hsmm, T).obs_seq for T in lengths])
+        seq_ends = cumsum(lengths)
+        hsmm_est, logL_evolution = baum_welch(hsmm, obs_seq; seq_ends, max_iterations=5)
+        @test is_nondecreasing(logL_evolution)
+        @test hsmm_est.init[3] == 0
+        @test hsmm_est.trans[3, :] == trans[3, :]
+        @test hsmm_est.dists[3] == dists[3]
+        @test hsmm_est.dur_dists[3] == durs[3]
+        @test valid_hsmm(hsmm_est)
+    end
+
+    @testset "max_duration" begin
+        rng = StableRNG(518)
+        hsmm = HSMM(
+            [0.5, 0.5],
+            [0.0 1.0; 1.0 0.0],
+            [Normal(-2.0), Normal(2.0)],
+            [Poisson(4.0), Poisson(3.0)],
+        )
+        lengths = fill(30, 20)
+        obs_seq = reduce(vcat, [rand(rng, hsmm, T).obs_seq for T in lengths])
+        seq_ends = cumsum(lengths)
+        hsmm_guess = HSMM(
+            [0.5, 0.5],
+            [0.0 1.0; 1.0 0.0],
+            [Normal(-1.0), Normal(1.0)],
+            [Poisson(1.0), Poisson(8.0)],
+        )
+        for max_duration in (6, 10)
+            _, logL_evolution = baum_welch(hsmm_guess, obs_seq; seq_ends, max_duration)
+            @test is_nondecreasing(logL_evolution)
+        end
+    end
+
+    @testset "Mixed precision" begin
+        # Float32 observations and Float64 durations promote the storage to Float64.
+        hsmm32 = HSMM(
+            Float32[0.6, 0.4],
+            Float32[0.0 1.0; 1.0 0.0],
+            [Normal(0.0f0, 1.0f0), Normal(5.0f0, 1.0f0)],
+            [Geometric(0.4), Geometric(0.6)],
+        )
+        obs_seq = Float32.(rand(StableRNG(519), hsmm32, 200).obs_seq)
+        hsmm_est, logL_evolution = baum_welch(hsmm32, obs_seq)
+        @test eltype(logL_evolution) == Float64
+        @test is_nondecreasing(logL_evolution)
+        @test hsmm_est.dur_dists isa Vector{Geometric{Float64}}
+        @test hsmm_est.trans isa Matrix{Float32}
+    end
+end
+
 @testset "HSMM type stability" begin
     rng = StableRNG(79)
     T = 20
@@ -1481,7 +2430,9 @@ end
     control_seq = fill(nothing, T)
     seq_ends = (T,)
     forward_storage = initialize_forward(hsmm, obs_seq, control_seq; seq_ends)
-    storage = initialize_forward_backward(hsmm, obs_seq, control_seq; seq_ends)
+    storage = initialize_forward_backward(
+        hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+    )
 
     @test_opt target_modules = (HiddenMarkovModels,) initialize_forward(
         hsmm, obs_seq, control_seq; seq_ends
@@ -1492,6 +2443,9 @@ end
     @test_opt target_modules = (HiddenMarkovModels,) forward(hsmm, obs_seq)
     @test_opt target_modules = (HiddenMarkovModels,) initialize_forward_backward(
         hsmm, obs_seq, control_seq; seq_ends
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) initialize_forward_backward(
+        hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
     )
     @test_opt target_modules = (HiddenMarkovModels,) forward_backward!(
         storage, hsmm, obs_seq, control_seq; seq_ends
@@ -1506,6 +2460,37 @@ end
         viterbi_storage, hsmm, obs_seq, control_seq; seq_ends
     )
     @test_opt target_modules = (HiddenMarkovModels,) viterbi(hsmm, obs_seq)
+    @test_opt target_modules = (HiddenMarkovModels,) forward_backward!(
+        storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
+    )
+    forward_backward!(storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true)
+    @test_opt target_modules = (HiddenMarkovModels,) fit!(
+        deepcopy(hsmm), storage, obs_seq, control_seq; seq_ends
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) baum_welch(hsmm, obs_seq)
+    completed = [1.0, 2.0, 0.5]
+    censored = [0.0, 0.3, 0.7]
+    geom_dists = [Geometric(0.3)]
+    pois_dists = [Poisson(2.0)]
+    @test_opt target_modules = (HiddenMarkovModels,) fit_duration_in_sequence!(
+        geom_dists, 1, completed, censored
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) fit_duration_in_sequence!(
+        pois_dists, 1, completed, censored
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) impute_censored_durations(
+        Poisson(2.0), completed, censored
+    )
+    pois_hsmm = HSMM(
+        [0.5, 0.5],
+        [0.0 1.0; 1.0 0.0],
+        [Normal(-1.0), Normal(1.0)],
+        [Poisson(2.0), Poisson(3.0)],
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) baum_welch(pois_hsmm, obs_seq)
+    @test_opt target_modules = (HiddenMarkovModels,) baum_welch(
+        hsmm, obs_seq, control_seq; seq_ends, max_duration=5
+    )
 
     @test_call target_modules = (HiddenMarkovModels,) forward_backward(
         hsmm, obs_seq; seq_ends=[5, T]
@@ -1519,5 +2504,8 @@ end
     int_control_seq = rand(rng, 1:2, T)
     @test_opt target_modules = (HiddenMarkovModels,) viterbi(
         controlled_hsmm, obs_seq, int_control_seq
+    )
+    @test_call target_modules = (HiddenMarkovModels,) baum_welch(
+        hsmm, obs_seq; seq_ends=[5, T]
     )
 end

@@ -8,8 +8,10 @@ using Distributions:
     MultivariateDistribution,
     MatrixDistribution,
     DiscreteUnivariateDistribution,
+    Geometric,
     logccdf,
-    fit
+    fit,
+    partype
 
 function HiddenMarkovModels.fit_in_sequence!(
     dists::AbstractVector{<:UnivariateDistribution},
@@ -17,7 +19,21 @@ function HiddenMarkovModels.fit_in_sequence!(
     x_nums::AbstractVector,
     w::AbstractVector,
 )
-    return dists[i] = fit(typeof(dists[i]), x_nums, w)
+    return dists[i] = fit(typeof(dists[i]), x_nums, fit_weights(dists[i], w))
+end
+
+#= Distributions.jl only has weighted fits of discrete distributions with `Float64` weights, so
+lower-precision weights, e.g. from a `Float32` model, are converted. This depends on `dists[i]`
+rather than on the element type of `dists`, which may mix families. =#
+fit_weights(::DiscreteUnivariateDistribution, w::AbstractVector) = float64_weights(w)
+fit_weights(::UnivariateDistribution, w::AbstractVector) = w
+
+float64_weights(w::AbstractVector{<:Union{Float16,Float32}}) = convert(Vector{Float64}, w)
+float64_weights(w::AbstractVector) = w
+
+# A weighted `fit` without a specialized method ends in the generic `suffstats`, which throws this.
+function HiddenMarkovModels.is_missing_weighted_fit(err::ErrorException, ::Distribution)
+    return startswith(err.msg, "suffstats is not implemented")
 end
 
 function HiddenMarkovModels.fit_in_sequence!(
@@ -52,6 +68,37 @@ function HiddenMarkovModels.duration_logsurvival(
     # `logccdf` can return `NaN` at the lower boundary.
     k <= one(k) && return zero(logccdf(dist, k))
     return logccdf(dist, k - 2)
+end
+
+#=
+`Geometric(q)` models `sojourn - 1`, so `p(d) = q (1-q)^(d-1)` and `S(d) = (1-q)^(d-1)`. Then
+`Q(q) = n log(q) + m log(1-q)` with `n = Σ completed[d]` sojourns ending, and
+`m = Σ (d-1) (completed[d] + censored[d])` steps where a sojourn continues, which is maximized by
+`q = n / (n + m) = n / (Σ d completed[d] + Σ (d-1) censored[d])`.
+=#
+function HiddenMarkovModels.fit_duration_in_sequence!(
+    dists::AbstractVector{<:Geometric},
+    i::Integer,
+    completed::AbstractVector,
+    censored::AbstractVector,
+)
+    length(completed) == length(censored) ||
+        throw(ArgumentError("`completed` and `censored` must have the same length"))
+    # Without completed sojourns `q` would be 0, see the contract of the generic function.
+    HiddenMarkovModels.check_completed_sojourns(completed)
+    R = float(promote_type(eltype(completed), eltype(censored)))
+    ends = zero(R)
+    steps = zero(R)
+    for (d, (c, z)) in enumerate(zip(completed, censored))
+        ends += c
+        steps += d * c + (d - 1) * z
+    end
+    T = partype(dists[i])
+    q = convert(T, ends / steps)
+    #= `q = 1` (all sojourns last one step) is the supremum, but `logpdf(Geometric(1), 0)` is NaN
+    in Distributions.jl, so stay one ulp below it. =#
+    dists[i] = Geometric(min(q, prevfloat(one(T))))
+    return nothing
 end
 
 end
