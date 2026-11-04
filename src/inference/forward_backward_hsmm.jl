@@ -34,9 +34,6 @@ struct HSMMForwardBackwardStorage{R,M<:AbstractMatrix{R}}
     seq_completed_durations::Vector{Matrix{R}}
     # `seq_censored_durations[k][d,j]`: contribution of sequence `k` to `censored_durations`
     seq_censored_durations::Vector{Matrix{R}}
-    # Whether the last call to `forward_backward!` filled `ξ` and the duration counts
-    filled_transition_marginals::RefValue{Bool}
-    filled_duration_counts::RefValue{Bool}
 end
 
 Base.eltype(::HSMMForwardBackwardStorage{R}) where {R} = R
@@ -54,6 +51,7 @@ $(SIGNATURES)
 
 `transition_marginals` and `duration_counts` allocate the buffers for `storage.ξ` and for the
 expected duration counts, which [`forward_backward!`](@ref) can only fill if they exist.
+[`forward_backward`](@ref) allocates neither.
 """
 function initialize_forward_backward(
     hsmm::AbstractHSMM,
@@ -87,10 +85,7 @@ function initialize_forward_backward(
 
     # Posterior weights of the segments sharing a start, one entry per duration.
     seg_weights = Vector{Vector{R}}(undef, K)
-    #= Expected duration counts, laid out like `log_dur` so that row `d` matches `p_j(d)`.
-    Summing `w[j,s,d]` over `s` while the segments are visited avoids an `N × T × D` array, and
-    per-sequence copies keep parallel calls independent. Without `duration_counts` they stay
-    `0 × 0`, so that plain smoothing does not pay for them. =#
+    # Duration counts, accumulated per sequence for threading, and `0 × 0` unless requested.
     seq_completed_durations = Vector{Matrix{R}}(undef, K)
     seq_censored_durations = Vector{Matrix{R}}(undef, K)
     for k in 1:K
@@ -121,8 +116,6 @@ function initialize_forward_backward(
         seg_weights,
         seq_completed_durations,
         seq_censored_durations,
-        Ref(false),
-        Ref(false),
     )
 end
 
@@ -419,9 +412,6 @@ function forward_backward!(
 )
     @argcheck !transition_marginals || has_transition_marginals(storage) "The storage has no transition marginals, use `initialize_forward_backward` with `transition_marginals=true`."
     @argcheck !duration_counts || has_duration_counts(storage) "The storage has no duration counts, use `initialize_forward_backward` with `duration_counts=true`."
-    # Invalidate the flags first, so that an error below cannot leave them stale.
-    storage.filled_transition_marginals[] = false
-    storage.filled_duration_counts[] = false
     if seq_ends isa NTuple{1}
         for k in eachindex(seq_ends)
             _forward_backward!(
@@ -450,8 +440,6 @@ function forward_backward!(
         end
     end
     duration_counts && sum_duration_counts!(storage)
-    storage.filled_transition_marginals[] = transition_marginals
-    storage.filled_duration_counts[] = duration_counts
     return nothing
 end
 

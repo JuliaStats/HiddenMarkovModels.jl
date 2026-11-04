@@ -19,21 +19,7 @@ function HiddenMarkovModels.fit_in_sequence!(
     x_nums::AbstractVector,
     w::AbstractVector,
 )
-    return dists[i] = fit(typeof(dists[i]), x_nums, fit_weights(dists[i], w))
-end
-
-#= Distributions.jl only has weighted fits of discrete distributions with `Float64` weights, so
-lower-precision weights, e.g. from a `Float32` model, are converted. This depends on `dists[i]`
-rather than on the element type of `dists`, which may mix families. =#
-fit_weights(::DiscreteUnivariateDistribution, w::AbstractVector) = float64_weights(w)
-fit_weights(::UnivariateDistribution, w::AbstractVector) = w
-
-float64_weights(w::AbstractVector{<:Union{Float16,Float32}}) = convert(Vector{Float64}, w)
-float64_weights(w::AbstractVector) = w
-
-# A weighted `fit` without a specialized method ends in the generic `suffstats`, which throws this.
-function HiddenMarkovModels.is_missing_weighted_fit(err::ErrorException, ::Distribution)
-    return startswith(err.msg, "suffstats is not implemented")
+    return dists[i] = fit(typeof(dists[i]), x_nums, w)
 end
 
 function HiddenMarkovModels.fit_in_sequence!(

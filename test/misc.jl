@@ -6,7 +6,6 @@ using Distributions
 using Logging: with_logger
 using ProgressLogging: ProgressLevel
 using Random: Random, AbstractRNG, Xoshiro
-using StatsAPI: StatsAPI
 using Test
 using Test: TestLogger
 
@@ -155,61 +154,4 @@ end
     end
     @test logL_a == logL_b
     @test transition_matrix(hmm_a) == transition_matrix(hmm_b)
-end
-
-# A controlled emission with a fitted shift, to run Baum-Welch on a ControlledEmissionHMM.
-mutable struct ShiftEmission <: ControlledEmission
-    shift::Float64
-end
-function DensityInterface.logdensityof(d::ShiftEmission, obs, control)
-    return -(obs - control - d.shift)^2 / 2
-end
-function Random.rand(rng::AbstractRNG, d::ShiftEmission, control)
-    return control + d.shift + randn(rng)
-end
-function StatsAPI.fit!(d::ShiftEmission, obs_seq, control_seq, w)
-    d.shift = sum(w .* (obs_seq .- control_seq)) / sum(w)
-    return d
-end
-
-@testset "Baum-Welch with empty sequences" begin
-    rng = Xoshiro(1)
-    lengths = [15, 9, 30]
-    seq_ends = cumsum(lengths)
-    # Inserting empty sequences, at the start, in the middle or at the end, changes nothing.
-    seq_ends_with_empty = (
-        [0, 15, 15, 24, 54, 54], (0, 15, 24, 24, 54), [15, 15, 15, 24, 54]
-    )
-
-    hmm = HMM([0.4, 0.6], [0.7 0.3; 0.3 0.7], [Normal(-1.0), Normal(1.0)])
-    obs_seq = reduce(vcat, [rand(rng, hmm, T).obs_seq for T in lengths])
-    hmm_guess = HMM([0.5, 0.5], [0.6 0.4; 0.4 0.6], [Normal(-0.8), Normal(0.8)])
-    reference, logL_reference = baum_welch(hmm_guess, obs_seq; seq_ends)
-    for seq_ends_empty in seq_ends_with_empty
-        hmm_est, logL_evolution = baum_welch(hmm_guess, obs_seq; seq_ends=seq_ends_empty)
-        @test logL_evolution ≈ logL_reference
-        @test hmm_est.init ≈ reference.init
-        @test hmm_est.trans ≈ reference.trans
-        @test mean.(hmm_est.dists) ≈ mean.(reference.dists)
-        @test std.(hmm_est.dists) ≈ std.(reference.dists)
-    end
-
-    control_seq = randn(rng, sum(lengths))
-    controlled_hmm = ControlledEmissionHMM(
-        [0.4, 0.6], [0.7 0.3; 0.3 0.7], [ShiftEmission(-1.0), ShiftEmission(1.0)]
-    )
-    obs_seq = rand(rng, controlled_hmm, control_seq).obs_seq
-    controlled_guess = ControlledEmissionHMM(
-        [0.5, 0.5], [0.6 0.4; 0.4 0.6], [ShiftEmission(-0.5), ShiftEmission(0.5)]
-    )
-    reference, logL_reference = baum_welch(controlled_guess, obs_seq, control_seq; seq_ends)
-    for seq_ends_empty in seq_ends_with_empty
-        hmm_est, logL_evolution = baum_welch(
-            controlled_guess, obs_seq, control_seq; seq_ends=seq_ends_empty
-        )
-        @test logL_evolution ≈ logL_reference
-        @test hmm_est.init ≈ reference.init
-        @test hmm_est.trans ≈ reference.trans
-        @test [d.shift for d in hmm_est.dists] ≈ [d.shift for d in reference.dists]
-    end
 end

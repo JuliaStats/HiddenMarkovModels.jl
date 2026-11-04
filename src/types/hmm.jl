@@ -63,15 +63,35 @@ function StatsAPI.fit!(
     seq_ends::AbstractVectorOrNTuple{Int},
 )
     (; γ, ξ) = fb_storage
-    # Fit states (transitions first, since they check that some sequence is nonempty)
-    fit_transitions!(hmm.trans, ξ, seq_ends)
+    # Fit states
+    if seq_ends isa NTuple
+        for k in eachindex(seq_ends)
+            t1, t2 = seq_limits(seq_ends, k)
+            scratch = ξ[t2]  # use ξ[t2] as scratch space since it is zero anyway
+            fill!(scratch, zero(eltype(scratch)))
+            for t in t1:(t2 - 1)
+                scratch .+= ξ[t]
+            end
+        end
+    else
+        @threads for k in eachindex(seq_ends)
+            t1, t2 = seq_limits(seq_ends, k)
+            scratch = ξ[t2]  # use ξ[t2] as scratch space since it is zero anyway
+            fill!(scratch, zero(eltype(scratch)))
+            for t in t1:(t2 - 1)
+                scratch .+= ξ[t]
+            end
+        end
+    end
     fill!(hmm.init, zero(eltype(hmm.init)))
+    fill!(hmm.trans, zero(eltype(hmm.trans)))
     for k in eachindex(seq_ends)
         t1, t2 = seq_limits(seq_ends, k)
-        t1 > t2 && continue  # empty sequence
         hmm.init .+= view(γ, :, t1)
+        hmm.trans .+= ξ[t2]
     end
     sum_to_one!(hmm.init)
+    foreach(sum_to_one!, eachrow(hmm.trans))
     # Fit observations
     for i in 1:length(hmm)
         fit_in_sequence!(hmm.dists, i, obs_seq, view(γ, i, :))

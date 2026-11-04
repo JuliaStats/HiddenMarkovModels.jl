@@ -70,26 +70,113 @@ duration_distributions(hsmm::HSMM) = hsmm.dur_dists
 
 ## Fitting
 
+#=
+Sum the transition marginals `ξ[t1:t2-1]` of each sequence into `ξ[t2]`, which is free to use
+as scratch space since no transition leaves the last timestep (its marginal is zero).
+=#
+function sum_transition_marginals!(
+    ξ::AbstractVector{<:AbstractMatrix}, seq_ends::AbstractVectorOrNTuple{Int}
+)
+    if seq_ends isa NTuple
+        for k in eachindex(seq_ends)
+            sum_transition_marginals!(ξ, seq_ends, k)
+        end
+    else
+        @threads for k in eachindex(seq_ends)
+            sum_transition_marginals!(ξ, seq_ends, k)
+        end
+    end
+    return nothing
+end
+
+function sum_transition_marginals!(
+    ξ::AbstractVector{<:AbstractMatrix}, seq_ends::AbstractVectorOrNTuple{Int}, k::Integer
+)
+    t1, t2 = seq_limits(seq_ends, k)
+    # An empty sequence has no slot of its own: `ξ[t2]` belongs to the previous sequence.
+    t1 > t2 && return nothing
+    scratch = ξ[t2]
+    fill!(scratch, zero(eltype(scratch)))
+    for t in t1:(t2 - 1)
+        scratch .+= ξ[t]
+    end
+    return nothing
+end
+
+function first_nonempty_sequence(seq_ends::AbstractVectorOrNTuple{Int})
+    for k in eachindex(seq_ends)
+        t1, t2 = seq_limits(seq_ends, k)
+        t1 <= t2 && return k
+    end
+    throw(ArgumentError("At least one sequence must be nonempty."))
+end
+
+#=
+Re-estimate `trans` from the transition marginals, summed over the nonempty sequences in the
+scratch slot `ξ[t2]` of the first one, by normalizing each row. A row without outgoing mass would
+give `0 / 0`, so it keeps its previous values.
+=#
+function fit_transitions!(
+    trans::AbstractMatrix,
+    ξ::AbstractVector{<:AbstractMatrix},
+    seq_ends::AbstractVectorOrNTuple{Int},
+)
+    k_first = first_nonempty_sequence(seq_ends)
+    sum_transition_marginals!(ξ, seq_ends)
+    _, t2_first = seq_limits(seq_ends, k_first)
+    total = ξ[t2_first]
+    for k in eachindex(seq_ends)
+        t1, t2 = seq_limits(seq_ends, k)
+        (k == k_first || t1 > t2) && continue
+        total .+= ξ[t2]
+    end
+    normalize_transitions!(trans, total)
+    return nothing
+end
+
+function normalize_transitions!(trans::AbstractMatrix, total::AbstractMatrix)
+    for i in axes(trans, 1)
+        outgoing = zero(eltype(total))
+        for j in axes(trans, 2)
+            outgoing += total[i, j]
+        end
+        iszero(outgoing) && continue
+        for j in axes(trans, 2)
+            trans[i, j] = total[i, j] / outgoing
+        end
+    end
+    return nothing
+end
+
+#= Scalar indexing of a sparse matrix is a binary search, so work on the stored entries, which
+`total` shares with `trans` when it was allocated with `similar`. =#
+function normalize_transitions!(trans::SparseMatrixCSC, total::SparseMatrixCSC)
+    if trans.colptr != total.colptr || rowvals(trans) != rowvals(total)
+        return invoke(
+            normalize_transitions!, Tuple{AbstractMatrix,AbstractMatrix}, trans, total
+        )
+    end
+    rows, vals, total_vals = rowvals(trans), nonzeros(trans), nonzeros(total)
+    outgoing = zeros(eltype(total), size(trans, 1))
+    for p in eachindex(total_vals)
+        outgoing[rows[p]] += total_vals[p]
+    end
+    for p in eachindex(vals)
+        i = rows[p]
+        iszero(outgoing[i]) || (vals[p] = total_vals[p] / outgoing[i])
+    end
+    return nothing
+end
+
 """
 $(SIGNATURES)
 
 Re-estimate the parameters of `hsmm` from the posterior quantities in `fb_storage`, which must
 come from [`forward_backward!`](@ref) with `transition_marginals=true` and
-`duration_counts=true`. Empty sequences are skipped. The transition marginals `fb_storage.ξ` are
-summed in place, so `forward_backward!` must run again before the next call.
+`duration_counts=true`. The duration distributions are refitted with
+[`HiddenMarkovModels.fit_duration_in_sequence!`](@ref).
 
-The duration distributions are refitted by
-[`HiddenMarkovModels.fit_duration_in_sequence!`](@ref), which accounts exactly for the
-right-censored final sojourns.
-
-The parameters of a state without posterior weight carry no information, so they are left
-unchanged: the transitions out of a state that is never left, the observation distribution of a
-state that is never visited, and the duration distribution of a state without completed
-sojourns. In the last case, which includes a state only ever seen in right-censored final
-sojourns, the data give no upper bound on its durations: the maximizer of the duration
-objective runs off to an infinite mean, while keeping the distribution keeps the objective, and
-hence the loglikelihood, non-decreasing. This is the only place where that policy is applied, so
-methods of `fit_duration_in_sequence!` may assume completed sojourns.
+The parameters of a state without posterior weight are left unchanged.
 """
 function StatsAPI.fit!(
     hsmm::HSMM,
@@ -98,27 +185,28 @@ function StatsAPI.fit!(
     seq_ends::AbstractVectorOrNTuple{Int},
 )
     (; γ, ξ, completed_durations, censored_durations) = fb_storage
-    @argcheck fb_storage.filled_transition_marginals[] "Transition marginals are missing, call `forward_backward!` with `transition_marginals=true` first."
-    @argcheck fb_storage.filled_duration_counts[] "Expected duration counts are missing, call `forward_backward!` with `duration_counts=true` first."
+    @argcheck has_transition_marginals(fb_storage) "The storage has no transition marginals, use `initialize_forward_backward` with `transition_marginals=true`."
+    @argcheck has_duration_counts(fb_storage) "The storage has no duration counts, use `initialize_forward_backward` with `duration_counts=true`."
+    @argcheck any(k -> <=(seq_limits(seq_ends, k)...), eachindex(seq_ends)) "At least one sequence must be nonempty."
     N = length(hsmm)
-    # Fit states (transitions first, since they check that some sequence is nonempty)
-    fit_transitions!(hsmm.trans, ξ, seq_ends)
-    # The transition marginals were summed in place.
-    fb_storage.filled_transition_marginals[] = false
+    # Fit states
     fill!(hsmm.init, zero(eltype(hsmm.init)))
     for k in eachindex(seq_ends)
         t1, t2 = seq_limits(seq_ends, k)
-        t1 > t2 && continue
+        t1 > t2 && continue  # empty sequence
         hsmm.init .+= view(γ, :, t1)
     end
     sum_to_one!(hsmm.init)
+    fit_transitions!(hsmm.trans, ξ, seq_ends)
     # Fit observations
     for i in 1:N
         γᵢ = view(γ, i, :)
         iszero(sum(γᵢ)) && continue
         fit_in_sequence!(hsmm.dists, i, obs_seq, γᵢ)
     end
-    # Fit durations, keeping the distribution of a state without completed sojourns.
+    #= Fit durations. With right-censored sojourns only, the durations have no upper bound and
+    the maximizer runs off to an infinite mean, so the distribution is kept, which keeps the
+    loglikelihood non-decreasing. =#
     for i in 1:N
         completed = view(completed_durations, :, i)
         iszero(sum(completed)) && continue

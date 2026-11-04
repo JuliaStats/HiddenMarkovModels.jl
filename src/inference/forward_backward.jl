@@ -44,8 +44,6 @@ function _forward_backward!(
 
     # Forward (fill B, α, c and logL)
     _forward!(storage, hmm, obs_seq, control_seq, seq_ends, k; error_if_not_finite=true)
-    # An empty sequence has no timestep: `t2` would point into the previous sequence.
-    t1 > t2 && return nothing
 
     # Backward
     β[:, t2] .= c[t2]

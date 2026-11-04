@@ -407,7 +407,7 @@ The sojourn distribution of state $j$, with parameters $\theta_j$, appears throu
 Q_j(\theta_j) = \sum_d \eta_{j,d} \log p_j(d; \theta_j) + \sum_d \zeta_{j,d} \log S_j(d; \theta_j)
 ```
 
-where the second term accounts for the sojourns that were still running at the end of their sequence.
+where the second term accounts for the sojourns that were still running at the end of their sequence, as in [Guedon2003](@cite) (see also [Yu2010](@cite)).
 Leaving it out, or counting the censored sojourns as if they had ended, biases the estimated sojourns downwards, and breaks the monotonicity of the algorithm.
 Each update below increases $Q_j$, and is carried out by [`HiddenMarkovModels.fit_duration_in_sequence!`](@ref).
 
@@ -442,7 +442,6 @@ and since the bound is tight at $\theta_j^{\text{old}}$, this cannot decrease $Q
 Therefore the loglikelihood of Baum-Welch still never decreases, and iterating the update alone would converge to a maximizer of $Q_j$ under the usual regularity conditions of EM.
 The inner sum is accumulated in log space as $d'$ grows, so each duration costs one evaluation of $p_j$.
 The weights extend beyond the longest sojourn, until the imputed mass left, $S_j(d'+1; \theta_j^{\text{old}}) \sum_{d} \zeta_{j,d} / S_j(d; \theta_j^{\text{old}})$, falls below the machine precision relative to the total weight, or the support of $p_j$ ends.
-This check needs the survival function, which is only evaluated at checkpoints whose spacing doubles, at the price of imputing at most twice as many durations as necessary.
 
 ## Bibliography
 

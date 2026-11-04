@@ -3,7 +3,6 @@ using HiddenMarkovModels
 using HiddenMarkovModels:
     AbstractLatentStateModel,
     AbstractHSMM,
-    DurationFitError,
     HSMMForwardBackwardStorage,
     HSMMForwardStorage,
     HSMMViterbiStorage,
@@ -29,7 +28,6 @@ using HiddenMarkovModels:
     viterbi!
 using Distributions:
     Binomial,
-    UnivariateDistribution,
     Categorical,
     Geometric,
     NegativeBinomial,
@@ -1979,7 +1977,7 @@ HiddenMarkovModels.duration_logsurvival(::NaNDuration, k::Integer) = NaN
         )
     end
 
-    @testset "fit! requires fresh transition marginals and duration counts" begin
+    @testset "fit! requires transition marginals and duration counts" begin
         rng = StableRNG(511)
         hsmm = rand_hsmm(rng, 2)
         T = 30
@@ -2011,42 +2009,10 @@ HiddenMarkovModels.duration_logsurvival(::NaNDuration, k::Integer) = NaN
             "duration_counts=true", message(() -> fit!(hsmm, storage, obs_seq; seq_ends))
         )
 
-        # Stale counts from an earlier call are not used.
+        # Without a nonempty sequence, `fit!` throws before modifying the model.
         storage = initialize_forward_backward(
             hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
         )
-        forward_backward!(
-            storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
-        )
-        forward_backward!(storage, hsmm, obs_seq, control_seq; seq_ends)
-        @test occursin(
-            "duration_counts=true", message(() -> fit!(hsmm, storage, obs_seq; seq_ends))
-        )
-        forward_backward!(
-            storage,
-            hsmm,
-            obs_seq,
-            control_seq;
-            seq_ends,
-            transition_marginals=false,
-            duration_counts=true,
-        )
-        @test occursin(
-            "transition_marginals=true",
-            message(() -> fit!(hsmm, storage, obs_seq; seq_ends)),
-        )
-        forward_backward!(
-            storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
-        )
-        fit!(hsmm, storage, obs_seq; seq_ends)
-        @test valid_hsmm(hsmm)
-        # `fit!` sums the transition marginals in place, so they cannot be reused.
-        @test occursin(
-            "transition_marginals=true",
-            message(() -> fit!(hsmm, storage, obs_seq; seq_ends)),
-        )
-
-        # Without a nonempty sequence, `fit!` throws before modifying the model.
         forward_backward!(
             storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
         )
@@ -2241,29 +2207,6 @@ end
         end
     end
 
-    @testset "Float32 durations" begin
-        dists64 = [Poisson(2.0)]
-        fit_duration_in_sequence!(dists64, 1, completed, censored)
-        dists32 = [Poisson(2.0f0)]
-        fit_duration_in_sequence!(dists32, 1, Float32.(completed), Float32.(censored))
-        @test dists32[1] isa Poisson{Float32}
-        @test mean(dists32[1]) ≈ mean(dists64[1]) rtol = 1e-5
-    end
-
-    @testset "Float32 durations in a vector of mixed families" begin
-        dists64 = [Poisson(2.0)]
-        fit_duration_in_sequence!(dists64, 1, completed, censored)
-        dists = UnivariateDistribution[Poisson(2.0f0), Geometric(0.5f0)]
-        fit_duration_in_sequence!(dists, 1, Float32.(completed), Float32.(censored))
-        @test dists[1] isa Poisson
-        @test mean(dists[1]) ≈ mean(dists64[1]) rtol = 1e-5
-        # A family without a weighted fit is still reported as such.
-        dists = UnivariateDistribution[Binomial(20, 0.5f0), Geometric(0.5f0)]
-        @test_throws DurationFitError fit_duration_in_sequence!(
-            dists, 1, Float32.(completed), Float32.(censored)
-        )
-    end
-
     @testset "Errors of a custom weighted fit propagate" begin
         dists = [FailingDuration(0.5)]
         @test_throws "custom fit failed" fit_duration_in_sequence!(
@@ -2309,16 +2252,11 @@ end
     end
 
     @testset "Duration types without a weighted fit" begin
-        for dists in ([DuckGeometric(0.3)], [Binomial(4, 0.5)])
-            err = try
-                fit_duration_in_sequence!(dists, 1, [1.0, 2.0, 0.0], [0.0, 0.0, 1.0])
-                nothing
-            catch e
-                e
-            end
-            @test err isa DurationFitError
-            @test occursin("fit_duration_in_sequence!", sprint(showerror, err))
-        end
+        counts = ([1.0, 2.0, 0.0], [0.0, 0.0, 1.0])
+        @test_throws MethodError fit_duration_in_sequence!(
+            [DuckGeometric(0.3)], 1, counts...
+        )
+        @test_throws "suffstats" fit_duration_in_sequence!([Binomial(4, 0.5)], 1, counts...)
     end
 
     @testset "Custom duration type through the fallback" begin
