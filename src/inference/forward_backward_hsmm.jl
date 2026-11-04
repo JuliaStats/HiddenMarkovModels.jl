@@ -54,10 +54,13 @@ function initialize_forward_backward(
         ξ[T] = zero(similar(trans, R))  # not used
     end
 
+    # Mass entering each state at `t`, and the likelihood of the observations after `t` given
+    # that a sojourn ends at `t` or starts at `t`.
     log_starts = Matrix{R}(undef, N, T)
     log_after_end = Matrix{R}(undef, N, T)
     log_from_start = Matrix{R}(undef, N, T)
 
+    # Posterior weights of the segments sharing a start, one entry per duration.
     seg_weights = Vector{Vector{R}}(undef, K)
     for k in 1:K
         seg_weights[k] = Vector{R}(undef, size(forward.log_dur[k], 1))
