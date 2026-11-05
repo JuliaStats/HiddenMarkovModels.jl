@@ -399,7 +399,7 @@ Q_j(\theta_j) = \sum_d \eta_{j,d} \log p_j(d; \theta_j) + \sum_d \zeta_{j,d} \lo
 
 where the second term accounts for the sojourns that were still running at the end of their sequence, as in [Guedon2003](@cite) (see also [Yu2010](@cite)).
 Leaving it out, or counting the censored sojourns as if they had ended, biases the estimated sojourns downwards, and breaks the monotonicity of the algorithm.
-Each update below increases $Q_j$, and is carried out by [`HiddenMarkovModels.fit_duration_in_sequence!`](@ref).
+Each update below does not decrease $Q_j$, and is carried out by [`HiddenMarkovModels.fit_duration_in_sequence!`](@ref).
 
 In the geometric case $p_j(d) = q_j (1-q_j)^{d-1}$ and $S_j(d) = (1-q_j)^{d-1}$, so $Q_j$ is maximized by
 
