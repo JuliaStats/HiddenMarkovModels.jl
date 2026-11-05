@@ -384,6 +384,21 @@ Unlike the forward pass, nothing is underestimated: the result is the most likel
 
 ## Explicit-duration HSMM Baum-Welch
 
+### Updates
+
+The expected complete-data loglikelihood splits into one term per parameter, as for the vanilla HMM.
+The initialization, transitions and observation distributions are updated in the same way:
+
+```math
+\hat{\pi}_i = \gamma_{i,1} \qquad \hat{a}_{i,j} = \frac{\sum_{t=1}^{T-1} \xi_{i,j,t}}{\sum_{t=1}^{T-1} \sum_{k \neq i} \xi_{i,k,t}}
+```
+
+and each $b_{i,\cdot}$ is fitted on the observations with weights $\gamma_{i,\cdot}$.
+Since $\xi_{i,i,t} = 0$, the diagonal of $\hat{a}$ remains zero.
+A state that is never left, for instance one seen only in right-censored final sojourns, carries no information about its transitions or its duration: these are left unchanged instead of being set to $0 / 0$ or to an infinite mean.
+
+Here $\xi$ only counts the ends of sojourns, so the durations are fitted separately from the expected sojourn lengths, as follows.
+
 ### Durations
 
 Let $\eta_{j,d}$ and $\zeta_{j,d}$ be the expected numbers of sojourns in state $j$ that are completed after exactly $d$ steps, and right-censored by the end of the sequence after $d$ steps.
