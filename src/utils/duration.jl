@@ -74,10 +74,8 @@ Provided methods:
 - A closed form for `Distributions.Geometric`.
 - A generic fallback, which imputes the remainder of the censored sojourns under the current
   `dists[i]`, then calls the weighted fit [`HiddenMarkovModels.fit_in_sequence!`](@ref) on the
-  durations `0:(L-1)` (the distributions model `sojourn - 1`). Without a weighted fit, its error
-  propagates: a `MethodError` for `StatsAPI.fit!`, or for Distributions.jl, an error from
-  `suffstats` (e.g. for `NegativeBinomial`). Distributions.jl only provides weighted fits with
-  `Float64` weights.
+  durations `0:(L-1)` (the distributions model `sojourn - 1`). It requires such a weighted fit
+  for the type of `dists[i]`.
 """
 function fit_duration_in_sequence!(
     dists::AbstractVector, i::Integer, completed::AbstractVector, censored::AbstractVector

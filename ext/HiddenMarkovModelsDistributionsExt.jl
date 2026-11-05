@@ -1,6 +1,6 @@
 module HiddenMarkovModelsDistributionsExt
 
-using HiddenMarkovModels: HiddenMarkovModels
+using HiddenMarkovModels: HiddenMarkovModels, @argcheck
 using Distributions:
     Distributions,
     Distribution,
@@ -68,8 +68,7 @@ function HiddenMarkovModels.fit_duration_in_sequence!(
     completed::AbstractVector,
     censored::AbstractVector,
 )
-    length(completed) == length(censored) ||
-        throw(ArgumentError("`completed` and `censored` must have the same length"))
+    @argcheck length(completed) == length(censored)
     # Without completed sojourns `q` would be 0, see the contract of the generic function.
     HiddenMarkovModels.check_completed_sojourns(completed)
     R = float(promote_type(eltype(completed), eltype(censored)))
@@ -82,7 +81,7 @@ function HiddenMarkovModels.fit_duration_in_sequence!(
     T = partype(dists[i])
     q = convert(T, ends / steps)
     #= `q = 1` (all sojourns last one step) is the supremum, but `logpdf(Geometric(1), 0)` is NaN
-    in Distributions.jl, so stay one ulp below it. =#
+    (`0 * log(0)`) in Distributions.jl, so stay one ulp below it. =#
     dists[i] = Geometric(min(q, prevfloat(one(T))))
     return nothing
 end
