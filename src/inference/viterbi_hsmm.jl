@@ -24,10 +24,8 @@ struct HSMMViterbiStorage{R}
     best_durations::Matrix{Int}
     # `best_previous[j,s] = ψ*[j,s]`, state left at `s-1` by the best path entering `j` at `s`
     best_previous::Matrix{Int}
-    # `cum_log_obs[j,t] = ℓ[j,t]`, sum of the finite `log b[j,u]` for `u ≤ t`
-    cum_log_obs::Matrix{R}
-    # `obs_zeros[j,t] = z[j,t]`, number of `b[j,u] = 0` for `u ≤ t`
-    obs_zeros::Matrix{Int}
+    # `log_obs[j,t] = log b[j,t]`
+    log_obs::Matrix{R}
     # `log_dur[k][d,j] = log p_j(d)` for sequence `k`
     log_dur::Vector{Matrix{R}}
     # `log_surv[k][d,j] = log S_j(d)` for sequence `k`
@@ -55,8 +53,7 @@ function initialize_viterbi(
     log_best_ends = Matrix{R}(undef, N, T)
     best_durations = Matrix{Int}(undef, N, T)
     best_previous = Matrix{Int}(undef, N, T)
-    cum_log_obs = Matrix{R}(undef, N, T)
-    obs_zeros = Matrix{Int}(undef, N, T)
+    log_obs = Matrix{R}(undef, N, T)
     log_dur, log_surv, incoming = sequence_buffers(R, N, seq_ends, max_duration)
 
     return HSMMViterbiStorage{R}(
@@ -66,8 +63,7 @@ function initialize_viterbi(
         log_best_ends,
         best_durations,
         best_previous,
-        cum_log_obs,
-        obs_zeros,
+        log_obs,
         log_dur,
         log_surv,
         incoming,
@@ -141,8 +137,7 @@ whose sojourn in `j` starts earlier. =#
 function extend_best_segments!(;
     log_best_ends::AbstractMatrix{R},
     best_durations::AbstractMatrix{Int},
-    cum_log_obs::AbstractMatrix{R},
-    obs_zeros::AbstractMatrix{Int},
+    log_obs::AbstractMatrix{R},
     incoming::AbstractVector{R},
     log_dur::AbstractMatrix{R},
     log_surv::AbstractMatrix{R},
@@ -155,18 +150,15 @@ function extend_best_segments!(;
     for j in 1:N
         inc = incoming[j]
         is_log_zero(inc) && continue
-        cum_start = s == t1 ? zero(R) : cum_log_obs[j, s - 1]
-        zeros_start = s == t1 ? 0 : obs_zeros[j, s - 1]
+        seg_log_obs = zero(R)
         for d in 1:min(max_duration, t2 - s + 1)
             t_end = s + d - 1
-            log_obs = segment_log_obs(
-                cum_log_obs[j, t_end], cum_start, obs_zeros[j, t_end], zeros_start
-            )
+            seg_log_obs += log_obs[j, t_end]
             # Every longer segment starting at `s` contains the same impossible observation.
-            is_log_zero(log_obs) && break
+            is_log_zero(seg_log_obs) && break
             # The final segment is right-censored.
             log_d = t_end == t2 ? log_surv[d, j] : log_dur[d, j]
-            log_path = inc + log_obs + log_d
+            log_path = inc + seg_log_obs + log_d
             if log_path > log_best_ends[j, t_end]
                 log_best_ends[j, t_end] = log_path
                 best_durations[j, t_end] = d
@@ -184,8 +176,7 @@ function _viterbi!(
     seq_ends::AbstractVectorOrNTuple{Int},
     k::Integer,
 ) where {R}
-    (; q, logL, log_best_ends, best_durations, best_previous, cum_log_obs, obs_zeros) =
-        storage
+    (; q, logL, log_best_ends, best_durations, best_previous, log_obs) = storage
     log_dur = storage.log_dur[k]
     log_surv = storage.log_surv[k]
     incoming = storage.incoming[k]
@@ -200,9 +191,11 @@ function _viterbi!(
     log_zero = convert(R, -Inf)
     uniform = uniform_controls(control_seq)
 
-    cumulate_log_obs!(
-        cum_log_obs, obs_zeros, hsmm, obs_seq, control_seq; t1, t2, error_if_not_finite=true
-    )
+    for t in t1:t2
+        obs_logdensities!(
+            view(log_obs, :, t), hsmm, obs_seq[t], control_seq[t]; error_if_not_finite=true
+        )
+    end
     @views log_best_ends[:, t1:t2] .= log_zero
 
     # The control at the start of a segment selects its duration distribution.
@@ -212,8 +205,7 @@ function _viterbi!(
     extend_best_segments!(;
         log_best_ends,
         best_durations,
-        cum_log_obs,
-        obs_zeros,
+        log_obs,
         incoming,
         log_dur,
         log_surv,
@@ -233,8 +225,7 @@ function _viterbi!(
             extend_best_segments!(;
                 log_best_ends,
                 best_durations,
-                cum_log_obs,
-                obs_zeros,
+                log_obs,
                 incoming,
                 log_dur,
                 log_surv,
@@ -270,8 +261,7 @@ function _viterbi!(
             extend_best_segments!(;
                 log_best_ends,
                 best_durations,
-                cum_log_obs,
-                obs_zeros,
+                log_obs,
                 incoming,
                 log_dur,
                 log_surv,

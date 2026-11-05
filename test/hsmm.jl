@@ -646,7 +646,6 @@ end
     end
 
     @testset "Zero-probability observation before the last timestep" begin
-        # An impossible observation must not poison later prefix differences.
         init = [0.5, 0.5]
         trans = [0.0 1.0; 1.0 0.0]
         dists = [Categorical([0.0, 1.0]), Categorical([0.5, 0.5])]
@@ -1366,9 +1365,11 @@ end
         logLs = [only(logL) for (_, logL) in results]
         @test issorted(logLs)
         for D in 2:T
-            # The optimum improves exactly when it needs a sojourn of length `D`.
+            # The optimum only improves when it needs a sojourn of length `D` (ties can go either way).
             q = first(results[D])
-            @test (logLs[D] > logLs[D - 1]) == (longest_segment(q) == D)
+            if !(logLs[D] ≈ logLs[D - 1])
+                @test longest_segment(q) == D
+            end
         end
         @test logLs[T] > logLs[1]
     end
@@ -1612,6 +1613,27 @@ end
             storage, hsmm, obs_seq, control_seq, seq_ends
         )) == 0
     end
+end
+
+@testset "HSMM precision" begin
+    # One huge negative `log b[2,1]` must not round away the later observations of state 2.
+    init = [0.5, 0.5]
+    trans = [0.0 1.0; 1.0 0.0]
+    dists = [Normal(0.0, 1.0), Normal(0.0, 1e-7)]
+    hsmm = HSMM(init, trans, dists, [Geometric(0.1), Geometric(0.1)])
+    obs_seq = vcat(10.0, zeros(7))
+    control_seq = fill(nothing, length(obs_seq))
+
+    γ, _, logL = brute_force_posteriors(hsmm, obs_seq, control_seq, 2)
+    @test logdensityof(hsmm, obs_seq) ≈ logL
+    @test forward(hsmm, obs_seq)[1] ≈ brute_force_marginals(hsmm, obs_seq, control_seq, 2)
+    γ_est, logL_est = forward_backward(hsmm, obs_seq)
+    @test γ_est ≈ γ
+    @test only(logL_est) ≈ logL
+    q, best_logL = brute_force_viterbi(hsmm, obs_seq, control_seq, 2)
+    q_est, best_logL_est = viterbi(hsmm, obs_seq)
+    @test q_est == q
+    @test only(best_logL_est) ≈ best_logL
 end
 
 @testset "HSMM type stability" begin

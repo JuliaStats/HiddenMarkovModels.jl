@@ -139,7 +139,7 @@ function accumulate_segments!(
     duration_counts::Bool,
 ) where {R}
     (; γ, log_starts, log_after_end, log_from_start, forward) = storage
-    (; cum_log_obs, obs_zeros) = forward
+    (; log_obs) = forward
     log_dur, log_surv = forward.log_dur[k], forward.log_surv[k]
     weights, logL = storage.seg_weights[k], storage.logL[k]
     completed = storage.seq_completed_durations[k]
@@ -148,20 +148,18 @@ function accumulate_segments!(
     log_zero = convert(R, -Inf)
     D = min(max_duration, t2 - s + 1)
     for j in 1:N
-        cum_start = s == t1 ? zero(R) : cum_log_obs[j, s - 1]
-        zeros_start = s == t1 ? 0 : obs_zeros[j, s - 1]
         log_start = log_starts[j, s]
         log_future = log_zero
+        @views weights[1:D] .= zero(R)
+        seg_log_obs = zero(R)
         for d in 1:D
             t_end = s + d - 1
-            weights[d] = zero(R)
-            log_obs = segment_log_obs(
-                cum_log_obs[j, t_end], cum_start, obs_zeros[j, t_end], zeros_start
-            )
-            is_log_zero(log_obs) && continue
+            seg_log_obs += log_obs[j, t_end]
+            # Every longer segment starting at `s` contains the same impossible observation.
+            is_log_zero(seg_log_obs) && break
             # The final segment is right-censored.
             log_d = t_end == t2 ? log_surv[d, j] : log_dur[d, j]
-            log_seg = log_obs + log_d + log_after_end[j, t_end]
+            log_seg = seg_log_obs + log_d + log_after_end[j, t_end]
             is_log_zero(log_seg) && continue
             log_future = logaddexp_safe(log_future, log_seg)
             if !is_log_zero(log_start)
@@ -306,7 +304,7 @@ function _forward_backward!(
         fill!(storage.seq_censored_durations[k], zero(R))
     end
 
-    # Forward (fill log_ends, cum_log_obs, obs_zeros and logL)
+    # Forward (fill log_obs, log_ends and logL)
     _forward!(forward, hsmm, obs_seq, control_seq, seq_ends, k; error_if_not_finite=true)
     t1 > t2 && return nothing
 
