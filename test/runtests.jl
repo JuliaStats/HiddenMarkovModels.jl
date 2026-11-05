@@ -86,4 +86,8 @@ end
     @testset verbose = true "HSMM types and sampling" begin
         include("hsmm.jl")
     end
+
+    @testset verbose = true "HSMM Baum-Welch" begin
+        include("baum_welch_hsmm.jl")
+    end
 end
