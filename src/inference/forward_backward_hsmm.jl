@@ -84,12 +84,13 @@ function initialize_forward_backward(
 
     # Duration counts, accumulated per sequence for threading, and `0 × 0` unless requested.
     count_dims(D) = duration_counts ? (D, N) : (0, 0)
-    seq_completed_durations = [
-        zeros(R, count_dims(size(log_dur, 1))) for log_dur in forward.log_dur
-    ]
-    seq_censored_durations = [
-        zeros(R, count_dims(size(log_dur, 1))) for log_dur in forward.log_dur
-    ]
+    seq_completed_durations = Vector{Matrix{R}}(undef, K)
+    seq_censored_durations = Vector{Matrix{R}}(undef, K)
+    for k in 1:K
+        dims = count_dims(size(forward.log_dur[k], 1))
+        seq_completed_durations[k] = zeros(R, dims)
+        seq_censored_durations[k] = zeros(R, dims)
+    end
     D_max = min(max_duration, longest_sequence(seq_ends))
     completed_durations = zeros(R, count_dims(D_max))
     censored_durations = zeros(R, count_dims(D_max))
