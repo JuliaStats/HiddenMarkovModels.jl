@@ -338,6 +338,26 @@ The identity still holds and serves as a consistency check.
 
 Everything is computed during a single backward sweep over $s$, in the log domain: when the sweep reaches $s$, the variables $G_{\cdot, s:T}$ are already known, so $H_{\cdot, s}$, the weights $w_{\cdot,s,\cdot}$ and then $G_{\cdot, s-1}$ and $\xi_{\cdot,\cdot,s-1}$ follow.
 
+### Expected duration counts
+
+Refitting the sojourn distributions requires the expected number of sojourns of each duration [Yu2010](@cite), which we split according to whether the sojourn is completed or right-censored by the end of the sequence:
+
+```math
+\begin{align*}
+\eta_{j,d} & = \sum_{s ~:~ s+d-1 < T} w_{j,s,d} \\
+\zeta_{j,d} & = w_{j,T-d+1,d}
+\end{align*}
+```
+
+Since each $w_{j,s,d}$ is computed exactly once during the backward sweep, both are accumulated on the fly with $O(N D)$ memory per sequence, instead of storing all the $O(N T D)$ weights.
+With several sequences, the counts of each sequence use its own length $T$ and are summed.
+With $D < T$, only the durations $d \leq D$ are counted, like in the recursion.
+They satisfy the following identities, since every timestep belongs to exactly one sojourn, every completed sojourn is followed by a transition, and every sequence ends with exactly one censored sojourn:
+
+```math
+\sum_{d} d \, (\eta_{j,d} + \zeta_{j,d}) = \sum_{t=1}^T \gamma_{j,t} \qquad \sum_d \eta_{j,d} = \sum_{t=1}^{T-1} \sum_{k \neq j} \xi_{j,k,t} \qquad \sum_j \sum_d \zeta_{j,d} = 1
+```
+
 ## Explicit-duration HSMM Viterbi
 
 The Viterbi algorithm replaces the sums of the forward pass with maximizations.
