@@ -264,18 +264,15 @@ Beware of the notation clash: the forward pass returns the *normalized* filtered
 
 ### Segment observation likelihoods
 
-Evaluating $\prod_{u=s+1}^{t} b_{j,u}$ naively costs $O(d)$ per segment, so we precompute prefix sums instead.
-Since $b_{j,u} = 0$ would turn their difference into $-\infty - (-\infty)$, zeros are left out of the sum and counted separately:
+Evaluating $\prod_{u=s+1}^{t} b_{j,u}$ naively costs $O(d)$ per segment.
+Since the segments starting at $s+1$ are enumerated by increasing end $t$, each product extends the previous one by a single factor, which brings each segment down to $O(1)$:
 
 ```math
-\ell_{j,t} = \sum_{u \leq t ~:~ b_{j,u} > 0} \log b_{j,u} \qquad z_{j,t} = \#\{u \leq t : b_{j,u} = 0\}
+\log \prod_{u=s+1}^{t+1} b_{j,u} = \log \prod_{u=s+1}^{t} b_{j,u} + \log b_{j,t+1}
 ```
 
-which brings each segment down to $O(1)$:
-
-```math
-\log \prod_{u=s+1}^{t} b_{j,u} = \begin{cases} \ell_{j,t} - \ell_{j,s} & \text{if } z_{j,t} = z_{j,s} \\ -\infty & \text{otherwise} \end{cases}
-```
+Differences of prefix sums would also cost $O(1)$, but a single very small $b_{j,u}$ makes the prefix sums so large that the later terms are rounded away.
+Once $b_{j,u} = 0$, every longer segment containing $u$ is impossible, so the enumeration stops there.
 
 ### Truncation and complexity
 
