@@ -1631,6 +1631,7 @@ end
     @test q_est == q
     @test only(best_logL_est) ≈ best_logL
 end
+
 @testset "HSMM type stability" begin
     rng = StableRNG(79)
     T = 20

@@ -235,6 +235,10 @@ HiddenMarkovModels.duration_logsurvival(::EndlessDuration, k::Integer) = 0.0
         fit_duration_in_sequence!(dists1, 1, [2.0, 0.0, 0.0], [1.0, 0.0, 0.0])
         @test succprob(dists1[1]) == prevfloat(1.0)
         @test isfinite(duration_logdensityof(dists1[1], 1))
+        # Also when `dists` mixes families.
+        mixed = [Geometric(0.5), Poisson(2.0)]
+        fit_duration_in_sequence!(mixed, 1, [2.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+        @test succprob(mixed[1]) == prevfloat(1.0)
     end
 
     @testset "The imputation fallback maximizes Q" begin
@@ -301,6 +305,10 @@ HiddenMarkovModels.duration_logsurvival(::EndlessDuration, k::Integer) = 0.0
         @test eltype(w32) == Float32
         @test length(w32) < length(w)
         @test sum(w32) ≈ 2.0f0
+        # A tiny total, whose `eps` multiple underflows, still ends the tail.
+        w_tiny = impute_censored_durations(dist, [1e-310, 0.0], [0.0, 1e-310])
+        @test length(w_tiny) <= length(w)
+        @test sum(w_tiny) ≈ 2e-310 rtol = 1e-6
         # Never truncated silently.
         @test_throws ArgumentError impute_censored_durations(
             EndlessDuration(), two_sojourns...
