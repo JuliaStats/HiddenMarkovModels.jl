@@ -141,7 +141,8 @@ function accumulate_segments!(
     (; cum_log_obs, obs_zeros) = forward
     log_dur, log_surv = forward.log_dur[k], forward.log_surv[k]
     weights, logL = storage.seg_weights[k], storage.logL[k]
-    counts = (storage.seq_completed_durations[k], storage.seq_censored_durations[k])
+    completed = storage.seq_completed_durations[k]
+    censored = storage.seq_censored_durations[k]
     N = size(γ, 1)
     log_zero = convert(R, -Inf)
     D = min(max_duration, t2 - s + 1)
@@ -173,7 +174,7 @@ function accumulate_segments!(
             γ[j, s + d - 1] += running
         end
         if duration_counts
-            add_duration_counts!(counts, weights, j, s, D, t2)
+            add_duration_counts!(completed, censored, weights, j, s, D, t2)
         end
     end
     return nothing
@@ -181,7 +182,15 @@ end
 
 # Only the longest segment can reach `t2`, unless `max_duration` cuts it short, and it is then the
 # right-censored final sojourn.
-function add_duration_counts!((completed, censored), weights, j, s, D, t2)
+function add_duration_counts!(
+    completed::AbstractMatrix,
+    censored::AbstractMatrix,
+    weights::AbstractVector,
+    j::Integer,
+    s::Integer,
+    D::Integer,
+    t2::Integer,
+)
     is_censored = s + D - 1 == t2
     for d in 1:(is_censored ? D - 1 : D)
         completed[d, j] += weights[d]
