@@ -36,6 +36,8 @@ struct HSMMForwardBackwardStorage{R,M<:AbstractMatrix{R}}
     seq_censored_durations::Vector{Matrix{R}}
 end
 
+Base.eltype(::HSMMForwardBackwardStorage{R}) where {R} = R
+
 # Without `duration_counts`, the counts are `0 × 0`.
 function has_duration_counts(storage::HSMMForwardBackwardStorage)
     return size(storage.completed_durations, 2) > 0
@@ -379,7 +381,7 @@ $(SIGNATURES)
 With `duration_counts=true`, also fill the expected duration counts
 `storage.completed_durations` and `storage.censored_durations`, from which the duration
 distributions can be re-estimated. This requires the corresponding buffers, see
-[`initialize_forward_backward`](@ref).
+[`initialize_forward_backward`](@ref), and is the default when they exist.
 """
 function forward_backward!(
     storage::HSMMForwardBackwardStorage,
@@ -388,7 +390,7 @@ function forward_backward!(
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
     transition_marginals::Bool=true,
-    duration_counts::Bool=false,
+    duration_counts::Bool=has_duration_counts(storage),
 )
     @argcheck !duration_counts || has_duration_counts(storage)
     if seq_ends isa NTuple{1}
