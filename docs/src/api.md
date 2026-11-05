@@ -27,6 +27,8 @@ seq_ends = cumsum(length.(obs_seqs))
 AbstractHMM
 HMM
 ControlledEmissionHMM
+AbstractHSMM
+HSMM
 ```
 
 ## Interface
@@ -35,6 +37,7 @@ ControlledEmissionHMM
 initialization
 transition_matrix
 obs_distributions
+duration_distributions
 ```
 
 ## Utils
@@ -139,9 +142,6 @@ HiddenMarkovModels.rand_duration
 HiddenMarkovModels.duration_logsurvival
 HiddenMarkovModels.StateSegments
 HiddenMarkovModels.AbstractLatentStateModel
-HiddenMarkovModels.AbstractHSMM
-HiddenMarkovModels.HSMM
-HiddenMarkovModels.duration_distributions
 HiddenMarkovModels.valid_hsmm
 ```
 

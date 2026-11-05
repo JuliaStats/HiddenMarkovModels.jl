@@ -280,7 +280,7 @@ which brings each segment down to $O(1)$:
 ### Truncation and complexity
 
 By default, $D$ is the length of the longest sequence, the constraint $d \leq D$ is vacuous and the result is exact.
-For $D < T$, every path containing a completed sojourn longer than $D$ is dropped, so $\mathcal{L}$ is underestimated and the marginals $\bar{\alpha}$ are biased.
+For $D < T$, every path containing a sojourn longer than $D$ is dropped, including the right-censored final one,, so $\mathcal{L}$ is underestimated and the marginals $\bar{\alpha}$ are biased.
 Note that the convention $S_j(d) = 0$ for $d > D$ only stops the enumeration of longer segments: a segment running for $d \leq D$ timesteps still carries the full mass $\mathbb{P}(D_j \geq d)$ of all longer sojourns.
 
 The cost is $O(N^2 T)$ for the transitions plus $O(N T D)$ for the segments, with $O(N T)$ memory.

@@ -79,11 +79,13 @@ end
         include("misc.jl")
     end
 
-    @testset verbose = true "Duration convention" begin
-        include("duration.jl")
-    end
+    if TEST_SUITE == "Standard"
+        @testset verbose = true "Duration convention" begin
+            include("duration.jl")
+        end
 
-    @testset verbose = true "HSMM types and sampling" begin
-        include("hsmm.jl")
+        @testset verbose = true "HSMM" begin
+            include("hsmm.jl")
+        end
     end
 end
