@@ -13,6 +13,7 @@ using HiddenMarkovModels:
     elementwise_log,
     Fill,
     StateSegments,
+    fit_duration_in_sequence!,
     forward!,
     forward_backward!,
     initialize_forward,
@@ -22,7 +23,7 @@ using HiddenMarkovModels:
     log_transition_matrix,
     valid_hsmm,
     viterbi!
-using Distributions: Binomial, Categorical, Geometric, Normal
+using Distributions: Binomial, Categorical, Geometric, Normal, Poisson
 using FiniteDifferences: FiniteDifferences, central_fdm
 using ForwardDiff: ForwardDiff
 using JET: @test_call, @test_opt
@@ -1664,6 +1665,14 @@ end
     )
     @test_opt target_modules = (HiddenMarkovModels,) forward_backward(hsmm, obs_seq)
     @test_opt target_modules = (HiddenMarkovModels,) logdensityof(hsmm, obs_seq)
+    completed = [1.0, 2.0, 0.5]
+    censored = [0.0, 0.3, 0.7]
+    @test_opt target_modules = (HiddenMarkovModels,) fit_duration_in_sequence!(
+        [Geometric(0.3)], 1, completed, censored
+    )
+    @test_opt target_modules = (HiddenMarkovModels,) fit_duration_in_sequence!(
+        [Poisson(2.0)], 1, completed, censored
+    )
     viterbi_storage = initialize_viterbi(hsmm, obs_seq, control_seq; seq_ends)
     @test_opt target_modules = (HiddenMarkovModels,) initialize_viterbi(
         hsmm, obs_seq, control_seq; seq_ends
