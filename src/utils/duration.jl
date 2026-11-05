@@ -77,7 +77,13 @@ function fit_duration_in_sequence!(
     dists::AbstractVector, i::Integer, completed::AbstractVector, censored::AbstractVector
 )
     @argcheck sum(completed) > 0
-    weights = impute_censored_durations(dists[i], completed, censored)
+    fit_duration!(dists, i, dists[i], completed, censored)
+    return nothing
+end
+
+# Dispatches on `dists[i]`, so that the closed forms also apply when `dists` mixes families.
+function fit_duration!(dists::AbstractVector, i::Integer, dist, completed, censored)
+    weights = impute_censored_durations(dist, completed, censored)
     fit_in_sequence!(dists, i, 0:(length(weights) - 1), weights)
     return nothing
 end
@@ -95,8 +101,9 @@ function impute_censored_durations(
     weights = Vector{R}(undef, length(completed))
     copyto!(weights, completed)
     total = sum(weights) + convert(R, sum(censored))
-    # Weights below this are lost to rounding when added to the total.
-    negligible = eps(R) * total
+    #= Weights below `eps(R) * total` are lost to rounding when added to the total. In log space,
+    since that product underflows for a tiny total. =#
+    log_negligible = log(eps(R)) + log(total)
     # `log_spread = log Σ_{d ≤ d'} censored[d] / S(d)`, so that `d'` gets `p(d') * exp(log_spread)`.
     log_spread = convert(R, -Inf)
     for d in eachindex(completed, censored)
@@ -105,7 +112,7 @@ function impute_censored_durations(
             log_surv = convert(R, duration_logsurvival(dist, d))
             if is_log_zero(log_surv)
                 # Only rounding noise can give weight to an impossible censored sojourn.
-                @argcheck c <= negligible
+                @argcheck log(convert(R, c)) <= log_negligible
             else
                 log_spread = logaddexp_safe(log_spread, log(convert(R, c)) - log_surv)
             end
@@ -113,7 +120,6 @@ function impute_censored_durations(
         add_imputed_weight!(weights, d, dist, log_spread)
     end
     is_log_zero(log_spread) && return weights
-    log_negligible = log(negligible)
     L = length(weights)
     while true
         # The mass left beyond `L` is `S(L + 1) * exp(log_spread)`, zero after the support.

@@ -1,6 +1,6 @@
 module HiddenMarkovModelsDistributionsExt
 
-using HiddenMarkovModels: HiddenMarkovModels, @argcheck
+using HiddenMarkovModels: HiddenMarkovModels
 using Distributions:
     Distributions,
     Distribution,
@@ -57,13 +57,13 @@ function HiddenMarkovModels.duration_logsurvival(
 end
 
 # Closed form, see the formulas page.
-function HiddenMarkovModels.fit_duration_in_sequence!(
-    dists::AbstractVector{<:Geometric},
+function HiddenMarkovModels.fit_duration!(
+    dists::AbstractVector,
     i::Integer,
+    dist::Geometric,
     completed::AbstractVector,
     censored::AbstractVector,
 )
-    @argcheck sum(completed) > 0
     R = float(promote_type(eltype(completed), eltype(censored)))
     ends = zero(R)
     steps = zero(R)
@@ -71,7 +71,7 @@ function HiddenMarkovModels.fit_duration_in_sequence!(
         ends += completed[d]
         steps += d * completed[d] + (d - 1) * censored[d]
     end
-    T = partype(dists[i])
+    T = partype(dist)
     q = convert(T, ends / steps)
     #= `q = 1` (all sojourns last one step) is the supremum, but `logpdf(Geometric(1), 0)` is NaN
     (`0 * log(0)`) in Distributions.jl, so stay one ulp below it. =#
