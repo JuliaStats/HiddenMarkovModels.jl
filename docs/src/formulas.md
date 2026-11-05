@@ -409,7 +409,6 @@ which is exactly the vanilla update $1 - \hat{a}_{j,j}$ of the equivalent HMM, w
 If state $j$ has no completed sojourn, i.e. $\sum_d \eta_{j,d} = 0$, it was only seen in censored final sojourns, so the data give no upper bound on its durations.
 Then $Q_j$ increases towards an infinite mean ($q_j \to 0$ in the geometric case), which no distribution attains.
 In this case the duration distribution is kept unchanged, which keeps $Q_j$, and hence the loglikelihood, non-decreasing.
-This also covers a state that is never visited.
 
 In general, $\log S_j(d; \theta_j)$ has no closed form, but the censored sojourns can be completed as in an EM algorithm, treating their unobserved remainder as missing data.
 Under the current parameters $\theta_j^{\text{old}}$, a sojourn known to last at least $d$ steps lasts exactly $d' \geq d$ steps with probability $p_j(d'; \theta_j^{\text{old}}) / S_j(d; \theta_j^{\text{old}})$, and Jensen's inequality gives
@@ -419,15 +418,14 @@ Under the current parameters $\theta_j^{\text{old}}$, a sojourn known to last at
 ```
 
 with equality at $\theta_j = \theta_j^{\text{old}}$.
-Plugging this bound into $Q_j$, maximizing it amounts to a weighted fit of the duration distribution on the values $d - 1$ (recall that the distribution supplied by the user models $D_j - 1$) with the weights
+Plugging this bound into $Q_j$, maximizing it amounts to a weighted fit of the duration distribution on the values $d - 1$ (recall that the distribution supplied by the user models the sojourn length minus one) with the weights
 
 ```math
 \tilde{\eta}_{j,d'} = \eta_{j,d'} + p_j(d'; \theta_j^{\text{old}}) \sum_{d \leq d'} \frac{\zeta_{j,d}}{S_j(d; \theta_j^{\text{old}})}
 ```
 
 and since the bound is tight at $\theta_j^{\text{old}}$, this cannot decrease $Q_j$.
-Therefore the loglikelihood of Baum-Welch still never decreases, and iterating the update alone would converge to a maximizer of $Q_j$ under the usual regularity conditions of EM.
-The inner sum is accumulated in log space as $d'$ grows, so each duration costs one evaluation of $p_j$.
+Therefore the loglikelihood of Baum-Welch still never decreases.
 The weights extend beyond the longest sojourn, until the imputed mass left, $S_j(d'+1; \theta_j^{\text{old}}) \sum_{d} \zeta_{j,d} / S_j(d; \theta_j^{\text{old}})$, falls below the machine precision relative to the total weight, or the support of $p_j$ ends.
 
 ## Bibliography

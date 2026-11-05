@@ -56,27 +56,20 @@ function HiddenMarkovModels.duration_logsurvival(
     return logccdf(dist, k - 2)
 end
 
-#=
-`Geometric(q)` models `sojourn - 1`, so `p(d) = q (1-q)^(d-1)` and `S(d) = (1-q)^(d-1)`. Then
-`Q(q) = n log(q) + m log(1-q)` with `n = Σ completed[d]` sojourns ending, and
-`m = Σ (d-1) (completed[d] + censored[d])` steps where a sojourn continues, which is maximized by
-`q = n / (n + m) = n / (Σ d completed[d] + Σ (d-1) censored[d])`.
-=#
+# Closed form, see the formulas page.
 function HiddenMarkovModels.fit_duration_in_sequence!(
     dists::AbstractVector{<:Geometric},
     i::Integer,
     completed::AbstractVector,
     censored::AbstractVector,
 )
-    @argcheck length(completed) == length(censored)
-    # Without completed sojourns `q` would be 0, see the contract of the generic function.
-    HiddenMarkovModels.check_completed_sojourns(completed)
+    @argcheck sum(completed) > 0
     R = float(promote_type(eltype(completed), eltype(censored)))
     ends = zero(R)
     steps = zero(R)
-    for (d, (c, z)) in enumerate(zip(completed, censored))
-        ends += c
-        steps += d * c + (d - 1) * z
+    for d in eachindex(completed, censored)
+        ends += completed[d]
+        steps += d * completed[d] + (d - 1) * censored[d]
     end
     T = partype(dists[i])
     q = convert(T, ends / steps)

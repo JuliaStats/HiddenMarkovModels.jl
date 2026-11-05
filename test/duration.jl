@@ -1,9 +1,27 @@
 using HiddenMarkovModels
-using HiddenMarkovModels: duration_logdensityof, duration_logsurvival, rand_duration
+using HiddenMarkovModels:
+    duration_logdensityof,
+    duration_logsurvival,
+    fit_duration_in_sequence!,
+    impute_censored_durations,
+    rand_duration
 using DensityInterface: DensityInterface, DensityKind, HasDensity, logdensityof
-using Distributions: DiscreteUniform, Geometric, NegativeBinomial, Poisson, logccdf
+using Distributions:
+    Distributions,
+    Binomial,
+    DiscreteUniform,
+    Geometric,
+    NegativeBinomial,
+    Poisson,
+    ccdf,
+    logccdf,
+    params,
+    pdf,
+    succprob
+using Optim: Optim, Brent, optimize
 using Random: AbstractRNG
 using StableRNGs: StableRNG
+using StatsAPI: StatsAPI
 using Statistics: mean
 using Test
 
@@ -137,5 +155,155 @@ end
 
     @testset "No silent fallback" begin
         @test_throws MethodError duration_logsurvival(ForgetfulDuration(), 2)
+    end
+end
+
+# The duration part of the expected complete-data loglikelihood.
+function duration_Q(dist, completed, censored)
+    Q = 0.0
+    for d in eachindex(completed, censored)
+        completed[d] > 0 && (Q += completed[d] * duration_logdensityof(dist, d))
+        censored[d] > 0 && (Q += censored[d] * duration_logsurvival(dist, d))
+    end
+    return Q
+end
+
+# Iterate the duration update to its fixed point.
+function iterate_duration_fit!(dists, completed, censored; iterations=20_000, rtol=1e-13)
+    params_prev = params(dists[1])
+    for _ in 1:iterations
+        fit_duration_in_sequence!(dists, 1, completed, censored)
+        all(isapprox.(params(dists[1]), params_prev; rtol)) && return true
+        params_prev = params(dists[1])
+    end
+    return false
+end
+
+# A geometric duration outside Distributions.jl, so it goes through the generic fallback.
+mutable struct MutableDuckGeometric
+    p::Float64
+end
+DensityInterface.DensityKind(::MutableDuckGeometric) = HasDensity()
+function DensityInterface.logdensityof(d::MutableDuckGeometric, k)
+    return k < 0 ? -Inf : log(d.p) + k * log1p(-d.p)
+end
+function HiddenMarkovModels.duration_logsurvival(d::MutableDuckGeometric, k::Integer)
+    return k <= 1 ? 0.0 : (k - 1) * log1p(-d.p)
+end
+function StatsAPI.fit!(d::MutableDuckGeometric, x::AbstractVector, w::AbstractVector)
+    d.p = sum(w) / (sum(w) + sum(w .* x))
+    return d
+end
+Distributions.params(d::MutableDuckGeometric) = (d.p,)
+
+# A duration whose survival never decreases, so its imputed tail never ends.
+struct EndlessDuration end
+DensityInterface.DensityKind(::EndlessDuration) = HasDensity()
+DensityInterface.logdensityof(::EndlessDuration, k) = -1.0
+HiddenMarkovModels.duration_logsurvival(::EndlessDuration, k::Integer) = 0.0
+
+@testset "Duration M-step" begin
+    completed = [0.0, 3.0, 5.5, 4.0, 2.5, 1.0, 0.5, 0.25, 0.1, 0.05]
+    censored = [0.2, 0.5, 0.3, 0.4, 0.6, 0.1, 0.0, 0.9, 0.0, 0.3]
+    D = length(completed)
+
+    @testset "Geometric closed form" begin
+        q = sum(completed) / (sum((1:D) .* completed) + sum((0:(D - 1)) .* censored))
+        dists = [Geometric(0.5)]
+        fit_duration_in_sequence!(dists, 1, completed, censored)
+        @test succprob(dists[1]) ≈ q
+        res = optimize(
+            logit_q -> -duration_Q(Geometric(1 / (1 + exp(-logit_q))), completed, censored),
+            -20.0,
+            20.0,
+            Brent();
+            abs_tol=1e-12,
+        )
+        @test q ≈ 1 / (1 + exp(-Optim.minimizer(res))) rtol = 1e-6
+        # Iterating the generic fallback converges to the same maximizer.
+        dists_fallback = [MutableDuckGeometric(0.5)]
+        @test iterate_duration_fit!(dists_fallback, completed, censored)
+        @test dists_fallback[1].p ≈ q rtol = 1e-8
+
+        dists32 = [Geometric(0.5f0)]
+        fit_duration_in_sequence!(dists32, 1, Float32.(completed), Float32.(censored))
+        @test dists32[1] isa Geometric{Float32}
+        @test succprob(dists32[1]) ≈ q rtol = 1e-5
+
+        # If every sojourn lasts one step, stay a valid distribution just below `q = 1`.
+        dists1 = [Geometric(0.5)]
+        fit_duration_in_sequence!(dists1, 1, [2.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+        @test succprob(dists1[1]) == prevfloat(1.0)
+        @test isfinite(duration_logdensityof(dists1[1], 1))
+    end
+
+    @testset "The imputation fallback maximizes Q" begin
+        dists = [Poisson(2.0)]
+        Q_evolution = [duration_Q(dists[1], completed, censored)]
+        for _ in 1:5
+            fit_duration_in_sequence!(dists, 1, completed, censored)
+            push!(Q_evolution, duration_Q(dists[1], completed, censored))
+        end
+        @test all(>=(0), diff(Q_evolution))
+        @test iterate_duration_fit!(dists, completed, censored)
+        res = optimize(
+            logλ -> -duration_Q(Poisson(exp(logλ)), completed, censored),
+            log(1e-3),
+            log(1e3),
+            Brent();
+            abs_tol=1e-12,
+        )
+        @test mean(dists[1]) ≈ exp(Optim.minimizer(res)) rtol = 1e-6
+    end
+
+    @testset "Without completed sojourns" begin
+        #= `fit!` keeps the distribution of such a state, so the provided methods refuse to fit
+        it rather than running off to an infinite mean. =#
+        only_censored = [0.0, 0.0, 1.0, 0.0, 0.5, 0.0]
+        for dists in ([Geometric(0.3)], [Poisson(2.0)])
+            old = dists[1]
+            for censored_counts in (zeros(6), only_censored)
+                @test_throws ArgumentError fit_duration_in_sequence!(
+                    dists, 1, zeros(6), censored_counts
+                )
+                @test dists[1] == old
+            end
+        end
+    end
+
+    @testset "Bounded support" begin
+        dist = Binomial(4, 0.5)  # sojourns of 1 to 5 steps
+        w = impute_censored_durations(dist, [1.0, 2.0, 0.0], [0.0, 0.0, 1.0])
+        @test length(w) == 5
+        @test w[1:2] == [1.0, 2.0]
+        @test w[3:5] ≈ [pdf(dist, d - 1) / ccdf(dist, 1) for d in 3:5]
+        @test sum(w) ≈ 4.0
+        # A censored sojourn beyond the support cannot come from the E-step.
+        @test_throws ArgumentError impute_censored_durations(
+            dist, zeros(7), [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+        )
+        # Unless its weight is rounding noise.
+        @test impute_censored_durations(
+            dist, [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1e-20]
+        ) == [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    end
+
+    @testset "Imputed tail" begin
+        two_sojourns = ([1.0, 0.0], [0.0, 1.0])
+        dist = Geometric(0.1)
+        w = impute_censored_durations(dist, two_sojourns...)
+        # The tail is followed until the remaining mass is below eps.
+        @test sum(w) ≈ 2.0 atol = 1e-13
+        @test w[3:10] ≈ [pdf(dist, d - 1) / ccdf(dist, 0) for d in 3:10]
+        w32 = impute_censored_durations(
+            Geometric(0.1f0), Float32.(two_sojourns[1]), Float32.(two_sojourns[2])
+        )
+        @test eltype(w32) == Float32
+        @test length(w32) < length(w)
+        @test sum(w32) ≈ 2.0f0
+        # Never truncated silently.
+        @test_throws ArgumentError impute_censored_durations(
+            EndlessDuration(), two_sojourns...
+        )
     end
 end
