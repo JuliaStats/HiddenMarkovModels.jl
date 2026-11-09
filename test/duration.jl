@@ -235,10 +235,6 @@ HiddenMarkovModels.duration_logsurvival(::EndlessDuration, k::Integer) = 0.0
         fit_duration_in_sequence!(dists1, 1, [2.0, 0.0, 0.0], [1.0, 0.0, 0.0])
         @test succprob(dists1[1]) == prevfloat(1.0)
         @test isfinite(duration_logdensityof(dists1[1], 1))
-        # Also when `dists` mixes families.
-        mixed = [Geometric(0.5), Poisson(2.0)]
-        fit_duration_in_sequence!(mixed, 1, [2.0, 0.0, 0.0], [1.0, 0.0, 0.0])
-        @test succprob(mixed[1]) == prevfloat(1.0)
     end
 
     @testset "The imputation fallback maximizes Q" begin
@@ -262,9 +258,11 @@ HiddenMarkovModels.duration_logsurvival(::EndlessDuration, k::Integer) = 0.0
 
     @testset "Without completed sojourns" begin
         # Fitting refuses rather than running off to an infinite mean.
-        @test_throws ArgumentError fit_duration_in_sequence!(
-            [Poisson(2.0)], 1, zeros(6), [0.0, 0.0, 1.0, 0.0, 0.5, 0.0]
-        )
+        for dists in ([Poisson(2.0)], [Geometric(0.3)])
+            @test_throws ArgumentError fit_duration_in_sequence!(
+                dists, 1, zeros(6), [0.0, 0.0, 1.0, 0.0, 0.5, 0.0]
+            )
+        end
     end
 
     @testset "Bounded support" begin
