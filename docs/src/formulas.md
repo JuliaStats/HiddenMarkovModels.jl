@@ -382,6 +382,52 @@ As in the forward pass, the recursion is carried out in the log domain, with the
 With $D < T$, the maximum over $s$ is restricted to $t - D + 1 \leq s \leq t$, so only state sequences whose sojourns all last at most $D$ timesteps are considered.
 Unlike the forward pass, nothing is underestimated: the result is the most likely of these state sequences, together with its exact joint loglikelihood, since $S_j(d)$ is never truncated for $d \leq D$.
 
+## Explicit-duration HSMM Baum-Welch
+
+### Durations
+
+Let $\eta_{j,d}$ and $\zeta_{j,d}$ be the expected numbers of sojourns in state $j$ that are completed after exactly $d$ steps, and right-censored by the end of the sequence after $d$ steps.
+
+The sojourn distribution of state $j$, with parameters $\theta_j$, appears through
+
+```math
+Q_j(\theta_j) = \sum_d \eta_{j,d} \log p_j(d; \theta_j) + \sum_d \zeta_{j,d} \log S_j(d; \theta_j)
+```
+
+where the second term accounts for the sojourns that were still running at the end of their sequence, as in [Guedon2003](@cite) (see also [Yu2010](@cite)).
+Leaving it out, or counting the censored sojourns as if they had ended, biases the estimated sojourns downwards, and breaks the monotonicity of the algorithm.
+Each update below does not decrease $Q_j$, and is carried out by [`HiddenMarkovModels.fit_duration_in_sequence!`](@ref).
+
+In the geometric case $p_j(d) = q_j (1-q_j)^{d-1}$ and $S_j(d) = (1-q_j)^{d-1}$, so $Q_j$ is maximized by
+
+```math
+\hat{q}_j = \frac{\sum_d \eta_{j,d}}{\sum_d d \, \eta_{j,d} + \sum_d (d-1) \, \zeta_{j,d}}
+```
+
+which is exactly the vanilla update $1 - \hat{a}_{j,j}$ of the equivalent HMM, whose self-transitions also cover the censored sojourn except for its last step.
+
+If state $j$ has no completed sojourn, i.e. $\sum_d \eta_{j,d} = 0$, it was only seen in censored final sojourns, so the data give no upper bound on its durations.
+Then $Q_j$ increases towards an infinite mean ($q_j \to 0$ in the geometric case), which no distribution attains.
+In this case the duration distribution is kept unchanged, which keeps $Q_j$, and hence the loglikelihood, non-decreasing.
+
+In general, $\log S_j(d; \theta_j)$ has no closed form, but the censored sojourns can be completed as in an EM algorithm, treating their unobserved remainder as missing data.
+Under the current parameters $\theta_j^{\text{old}}$, a sojourn known to last at least $d$ steps lasts exactly $d' \geq d$ steps with probability $p_j(d'; \theta_j^{\text{old}}) / S_j(d; \theta_j^{\text{old}})$, and Jensen's inequality gives
+
+```math
+\log S_j(d; \theta_j) \geq \sum_{d' \geq d} \frac{p_j(d'; \theta_j^{\text{old}})}{S_j(d; \theta_j^{\text{old}})} \log \frac{p_j(d'; \theta_j)}{p_j(d'; \theta_j^{\text{old}})} + \log S_j(d; \theta_j^{\text{old}})
+```
+
+with equality at $\theta_j = \theta_j^{\text{old}}$.
+Plugging this bound into $Q_j$, maximizing it amounts to a weighted fit of the duration distribution on the values $d - 1$ (recall that the distribution supplied by the user models the sojourn length minus one) with the weights
+
+```math
+\tilde{\eta}_{j,d'} = \eta_{j,d'} + p_j(d'; \theta_j^{\text{old}}) \sum_{d \leq d'} \frac{\zeta_{j,d}}{S_j(d; \theta_j^{\text{old}})}
+```
+
+and since the bound is tight at $\theta_j^{\text{old}}$, this cannot decrease $Q_j$.
+Therefore the loglikelihood of Baum-Welch still never decreases.
+The weights extend beyond the longest sojourn, until the imputed mass left, $S_j(d'+1; \theta_j^{\text{old}}) \sum_{d} \zeta_{j,d} / S_j(d; \theta_j^{\text{old}})$, falls below the machine precision relative to the total weight, or the support of $p_j$ ends.
+
 ## Bibliography
 
 ```@bibliography

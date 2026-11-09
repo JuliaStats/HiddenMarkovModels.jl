@@ -1,5 +1,6 @@
 module HiddenMarkovModelsDistributionsExt
 
+using ArgCheck: @argcheck
 using HiddenMarkovModels: HiddenMarkovModels
 using Distributions:
     Distributions,
@@ -8,8 +9,10 @@ using Distributions:
     MultivariateDistribution,
     MatrixDistribution,
     DiscreteUnivariateDistribution,
+    Geometric,
     logccdf,
-    fit
+    fit,
+    partype
 
 function HiddenMarkovModels.fit_in_sequence!(
     dists::AbstractVector{<:UnivariateDistribution},
@@ -52,6 +55,26 @@ function HiddenMarkovModels.duration_logsurvival(
     # `logccdf` can return `NaN` at the lower boundary.
     k <= one(k) && return zero(logccdf(dist, k))
     return logccdf(dist, k - 2)
+end
+
+# Closed form, see the formulas page.
+function HiddenMarkovModels.fit_duration_in_sequence!(
+    dists::AbstractVector{<:Geometric},
+    i::Integer,
+    completed::AbstractVector,
+    censored::AbstractVector,
+)
+    @argcheck sum(completed) > 0
+    ends = sum(completed)
+    steps = sum(
+        d * completed[d] + (d - 1) * censored[d] for d in eachindex(completed, censored)
+    )
+    T = partype(dists[i])
+    q = convert(T, ends / steps)
+    #= `q = 1` (all sojourns last one step) is the supremum, but `logpdf(Geometric(1), 0)` is NaN
+    (`0 * log(0)`) in Distributions.jl, so stay one ulp below it. =#
+    dists[i] = Geometric(min(q, prevfloat(one(T))))
+    return nothing
 end
 
 end
