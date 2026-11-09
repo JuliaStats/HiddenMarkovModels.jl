@@ -76,7 +76,9 @@ durations `0:(L-1)` with the resulting weights. A closed form is provided for
 function fit_duration_in_sequence!(
     dists::AbstractVector, i::Integer, completed::AbstractVector, censored::AbstractVector
 )
-    @argcheck sum(completed) > 0
+    @argcheck sum(completed) > 0 "Cannot fit the duration of state $i because none of its \
+    stays ends inside a sequence. Try skipping this state and keeping its current duration \
+    distribution, as `fit!` does."
     fit_duration!(dists, i, dists[i], completed, censored)
     return nothing
 end
@@ -112,7 +114,10 @@ function impute_censored_durations(
             log_surv = convert(R, duration_logsurvival(dist, d))
             if is_log_zero(log_surv)
                 # Only rounding noise can give weight to an impossible censored sojourn.
-                @argcheck log(convert(R, c)) <= log_negligible
+                @argcheck log(convert(R, c)) <= log_negligible "A state is still active \
+                after $d steps, but its duration distribution $dist says it cannot last that \
+                long. Try checking that `duration_logsurvival` agrees with \
+                `duration_logdensityof` for this distribution."
             else
                 log_spread = logaddexp_safe(log_spread, log(convert(R, c)) - log_surv)
             end
@@ -127,7 +132,9 @@ function impute_censored_durations(
         # Written so that a NaN survival also stops the tail.
         !(log_spread + log_surv > log_negligible) && break
         # Bounds the memory spent on the tail (8 MiB in `Float64`).
-        @argcheck L < 2^20
+        @argcheck L < 2^20 "The duration distribution $dist puts too much weight on stays \
+        longer than $(2^20) steps, which is too many to compute. Try a duration distribution \
+        with a smaller mean."
         L += 1
         push!(weights, zero(R))
         add_imputed_weight!(weights, L, dist, log_spread)
