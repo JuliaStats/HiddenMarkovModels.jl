@@ -64,13 +64,10 @@ function HiddenMarkovModels.fit_duration!(
     completed::AbstractVector,
     censored::AbstractVector,
 )
-    R = float(promote_type(eltype(completed), eltype(censored)))
-    ends = zero(R)
-    steps = zero(R)
-    for d in eachindex(completed, censored)
-        ends += completed[d]
-        steps += d * completed[d] + (d - 1) * censored[d]
-    end
+    ends = sum(completed)
+    steps = sum(
+        d * completed[d] + (d - 1) * censored[d] for d in eachindex(completed, censored)
+    )
     T = partype(dist)
     q = convert(T, ends / steps)
     #= `q = 1` (all sojourns last one step) is the supremum, but `logpdf(Geometric(1), 0)` is NaN

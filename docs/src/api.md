@@ -123,6 +123,7 @@ HiddenMarkovModels.valid_hmm
 HiddenMarkovModels.rand_prob_vec
 HiddenMarkovModels.rand_trans_mat
 HiddenMarkovModels.fit_in_sequence!
+HiddenMarkovModels.fit_duration_in_sequence!
 ```
 
 ## Internals
@@ -143,7 +144,6 @@ HiddenMarkovModels.duration_logsurvival
 HiddenMarkovModels.StateSegments
 HiddenMarkovModels.AbstractLatentStateModel
 HiddenMarkovModels.valid_hsmm
-HiddenMarkovModels.fit_duration_in_sequence!
 ```
 
 ## Index

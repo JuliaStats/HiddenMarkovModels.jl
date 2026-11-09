@@ -66,25 +66,31 @@ where `p` and `S` are given by [`duration_logdensityof`](@ref) and
 completed and right-censored sojourns lasting `d` steps. A method must not decrease `Q`, and can
 assume `sum(completed) > 0`.
 
-# Default behavior
+Default behavior: impute the remainder of the censored sojourns under the current `dists[i]`
+(an EM step for `Q`, see the formulas page), then call
+[`HiddenMarkovModels.fit_in_sequence!`](@ref) on the durations `0:(L-1)` with the resulting
+weights.
 
-Impute the remainder of the censored sojourns under the current `dists[i]` (an EM step for `Q`,
-see the formulas page), then call [`HiddenMarkovModels.fit_in_sequence!`](@ref) on the
-durations `0:(L-1)` with the resulting weights. A closed form is provided for
-`Distributions.Geometric`.
+Override for Distributions.jl (in the package extension): a closed form for `Geometric`.
 """
 function fit_duration_in_sequence!(
     dists::AbstractVector, i::Integer, completed::AbstractVector, censored::AbstractVector
 )
     @argcheck sum(completed) > 0 "Cannot fit the duration of state $i because none of its \
     stays ends inside a sequence. Try skipping this state and keeping its current duration \
-    distribution, as `fit!` does."
+    distribution."
     fit_duration!(dists, i, dists[i], completed, censored)
     return nothing
 end
 
 # Dispatches on `dists[i]`, so that the closed forms also apply when `dists` mixes families.
-function fit_duration!(dists::AbstractVector, i::Integer, dist, completed, censored)
+function fit_duration!(
+    dists::AbstractVector,
+    i::Integer,
+    dist,
+    completed::AbstractVector,
+    censored::AbstractVector,
+)
     weights = impute_censored_durations(dist, completed, censored)
     fit_in_sequence!(dists, i, 0:(length(weights) - 1), weights)
     return nothing
@@ -100,11 +106,9 @@ function impute_censored_durations(
     dist, completed::AbstractVector, censored::AbstractVector
 )
     R = float(promote_type(eltype(completed), eltype(censored)))
-    weights = Vector{R}(undef, length(completed))
-    copyto!(weights, completed)
-    total = sum(weights) + convert(R, sum(censored))
-    #= Weights below `eps(R) * total` are lost to rounding when added to the total. In log space,
-    since that product underflows for a tiny total. =#
+    weights = collect(R, completed)
+    total = sum(weights) + sum(censored)
+    # Weights below `eps(R) * total` are lost to rounding (in log space, which cannot underflow).
     log_negligible = log(eps(R)) + log(total)
     # `log_spread = log Σ_{d ≤ d'} censored[d] / S(d)`, so that `d'` gets `p(d') * exp(log_spread)`.
     log_spread = convert(R, -Inf)
@@ -113,7 +117,6 @@ function impute_censored_durations(
         if c > zero(c)
             log_surv = convert(R, duration_logsurvival(dist, d))
             if is_log_zero(log_surv)
-                # Only rounding noise can give weight to an impossible censored sojourn.
                 @argcheck log(convert(R, c)) <= log_negligible "A state is still active \
                 after $d steps, but its duration distribution $dist says it cannot last that \
                 long. Try checking that `duration_logsurvival` agrees with \
@@ -122,31 +125,16 @@ function impute_censored_durations(
                 log_spread = logaddexp_safe(log_spread, log(convert(R, c)) - log_surv)
             end
         end
-        add_imputed_weight!(weights, d, dist, log_spread)
+        weights[d] += exp(convert(R, duration_logdensityof(dist, d)) + log_spread)
     end
-    is_log_zero(log_spread) && return weights
     L = length(weights)
-    while true
-        # The mass left beyond `L` is `S(L + 1) * exp(log_spread)`, zero after the support.
-        log_surv = convert(R, duration_logsurvival(dist, L + 1))
-        # Written so that a NaN survival also stops the tail.
-        !(log_spread + log_surv > log_negligible) && break
-        # Bounds the memory spent on the tail (8 MiB in `Float64`).
+    # The mass left beyond `L` is `S(L + 1) * exp(log_spread)`. A NaN also stops the tail.
+    while log_spread + convert(R, duration_logsurvival(dist, L + 1)) > log_negligible
         @argcheck L < 2^20 "The duration distribution $dist puts too much weight on stays \
         longer than $(2^20) steps, which is too many to compute. Try a duration distribution \
         with a smaller mean."
         L += 1
-        push!(weights, zero(R))
-        add_imputed_weight!(weights, L, dist, log_spread)
+        push!(weights, exp(convert(R, duration_logdensityof(dist, L)) + log_spread))
     end
     return weights
-end
-
-function add_imputed_weight!(
-    weights::AbstractVector{R}, d::Integer, dist, log_spread::R
-) where {R}
-    is_log_zero(log_spread) && return nothing
-    log_p = convert(R, duration_logdensityof(dist, d))
-    is_log_zero(log_p) || (weights[d] += exp(log_p + log_spread))
-    return nothing
 end

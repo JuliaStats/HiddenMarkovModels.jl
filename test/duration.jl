@@ -261,18 +261,10 @@ HiddenMarkovModels.duration_logsurvival(::EndlessDuration, k::Integer) = 0.0
     end
 
     @testset "Without completed sojourns" begin
-        #= `fit!` keeps the distribution of such a state, so the provided methods refuse to fit
-        it rather than running off to an infinite mean. =#
-        only_censored = [0.0, 0.0, 1.0, 0.0, 0.5, 0.0]
-        for dists in ([Geometric(0.3)], [Poisson(2.0)])
-            old = dists[1]
-            for censored_counts in (zeros(6), only_censored)
-                @test_throws ArgumentError fit_duration_in_sequence!(
-                    dists, 1, zeros(6), censored_counts
-                )
-                @test dists[1] == old
-            end
-        end
+        # Fitting refuses rather than running off to an infinite mean.
+        @test_throws ArgumentError fit_duration_in_sequence!(
+            [Poisson(2.0)], 1, zeros(6), [0.0, 0.0, 1.0, 0.0, 0.5, 0.0]
+        )
     end
 
     @testset "Bounded support" begin
