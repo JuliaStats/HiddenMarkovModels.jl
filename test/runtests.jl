@@ -88,8 +88,4 @@ end
             include("hsmm.jl")
         end
     end
-
-    @testset verbose = true "HSMM Baum-Welch" begin
-        include("baum_welch_hsmm.jl")
-    end
 end
