@@ -31,8 +31,13 @@ abstract type AbstractHMM <: AbstractLatentStateModel end
         hmm, fb_storage::ForwardBackwardStorage,
         obs_seq, [control_seq]; seq_ends,
     )
+    StatsAPI.fit!(
+        hsmm, fb_storage::HSMMForwardBackwardStorage,
+        obs_seq, [control_seq]; seq_ends,
+    )
 
-Update `hmm` in-place based on information generated during forward-backward.
+Update `hmm` or `hsmm` in-place based on information generated during forward-backward.
+For an HSMM, `fb_storage` must have been created with `duration_counts=true`.
 
 This function is allowed to reuse `fb_storage` as a scratch space, so its contents should not be trusted afterwards.
 """

@@ -62,7 +62,8 @@ function valid_hsmm(hsmm::AbstractHSMM, control=nothing)
     length(durations) == N || return false
 
     # No self-transitions (allowing for numerical noise).
-    all(<=(eps(float(eltype(trans)))), Diagonal(trans)) || return false
+    # `Diagonal(trans)` would copy the diagonal of a dense matrix and allocate in `fit!`.
+    all(i -> trans[i, i] <= eps(float(eltype(trans))), axes(trans, 1)) || return false
 
     # Duration distributions must carry a density.
     return valid_dists(durations)

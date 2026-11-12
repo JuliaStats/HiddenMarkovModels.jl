@@ -17,9 +17,9 @@ end
 $(SIGNATURES)
 """
 function baum_welch!(
-    fb_storage::ForwardBackwardStorage,
+    fb_storage::Union{ForwardBackwardStorage,HSMMForwardBackwardStorage},
     logL_evolution::Vector,
-    hmm::AbstractHMM,
+    hmm::AbstractLatentStateModel,
     obs_seq::AbstractVector,
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
@@ -53,6 +53,42 @@ function baum_welch!(
     return nothing
 end
 
+# Run Baum-Welch on `model`, which is modified, with storage already allocated for it.
+function baum_welch_with_storage(
+    model::AbstractLatentStateModel,
+    fb_storage,
+    obs_seq::AbstractVector,
+    control_seq::AbstractVector;
+    seq_ends::AbstractVectorOrNTuple{Int},
+    atol,
+    max_iterations,
+    loglikelihood_increasing,
+    progress::Bool,
+)
+    logL_evolution = eltype(fb_storage)[]
+    sizehint!(logL_evolution, max_iterations)
+    baum_welch!(
+        fb_storage,
+        logL_evolution,
+        model,
+        obs_seq,
+        control_seq;
+        seq_ends,
+        atol,
+        max_iterations,
+        loglikelihood_increasing,
+        progress,
+    )
+    return model, logL_evolution
+end
+
+const BAUM_WELCH_KWARGS_DOC = """
+- `atol`: minimum loglikelihood increase at an iteration of the algorithm (otherwise the algorithm is deemed to have converged)
+- `max_iterations`: maximum number of iterations of the algorithm
+- `loglikelihood_increasing`: whether to throw an error if the loglikelihood decreases
+- `progress`: whether to emit progress log records (rendered as a bar in REPL with `TerminalLoggers`, natively in Pluto, Jupyter and VS Code); off by default to keep the loop allocation-free
+"""
+
 """
 $(SIGNATURES)
 
@@ -62,10 +98,7 @@ Return a tuple `(hmm_est, loglikelihood_evolution)` where `hmm_est` is the estim
 
 # Keyword arguments
 
-- `atol`: minimum loglikelihood increase at an iteration of the algorithm (otherwise the algorithm is deemed to have converged)
-- `max_iterations`: maximum number of iterations of the algorithm
-- `loglikelihood_increasing`: whether to throw an error if the loglikelihood decreases
-- `progress`: whether to emit progress log records (rendered as a bar in REPL with `TerminalLoggers`, natively in Pluto, Jupyter and VS Code); off by default to keep the loop allocation-free
+$BAUM_WELCH_KWARGS_DOC
 """
 function baum_welch(
     hmm_guess::AbstractHMM,
@@ -79,12 +112,9 @@ function baum_welch(
 )
     hmm = deepcopy(hmm_guess)
     fb_storage = initialize_forward_backward(hmm, obs_seq, control_seq; seq_ends)
-    logL_evolution = eltype(fb_storage)[]
-    sizehint!(logL_evolution, max_iterations)
-    baum_welch!(
-        fb_storage,
-        logL_evolution,
+    return baum_welch_with_storage(
         hmm,
+        fb_storage,
         obs_seq,
         control_seq;
         seq_ends,
@@ -93,14 +123,54 @@ function baum_welch(
         loglikelihood_increasing,
         progress,
     )
-    return hmm, logL_evolution
+end
+
+"""
+$(SIGNATURES)
+
+Apply the Baum-Welch algorithm to estimate the parameters of an HSMM on `obs_seq`, starting from `hsmm_guess`.
+The duration distributions are fitted with [`HiddenMarkovModels.fit_duration_in_sequence!`](@ref).
+
+Return a tuple `(hsmm_est, loglikelihood_evolution)` where `hsmm_est` is the estimated HSMM and `loglikelihood_evolution` is a vector of loglikelihood values, one per iteration of the algorithm.
+
+# Keyword arguments
+
+- `max_duration`: maximum sojourn length considered, as in [`forward`](@ref)
+$BAUM_WELCH_KWARGS_DOC
+"""
+function baum_welch(
+    hsmm_guess::AbstractHSMM,
+    obs_seq::AbstractVector,
+    control_seq::AbstractVector=Fill(nothing, length(obs_seq));
+    seq_ends::AbstractVectorOrNTuple{Int}=(length(obs_seq),),
+    max_duration::Int=longest_sequence(seq_ends),
+    atol=1e-5,
+    max_iterations=100,
+    loglikelihood_increasing=true,
+    progress::Bool=false,
+)
+    hsmm = deepcopy(hsmm_guess)
+    fb_storage = initialize_forward_backward(
+        hsmm, obs_seq, control_seq; seq_ends, max_duration, duration_counts=true
+    )
+    return baum_welch_with_storage(
+        hsmm,
+        fb_storage,
+        obs_seq,
+        control_seq;
+        seq_ends,
+        atol,
+        max_iterations,
+        loglikelihood_increasing,
+        progress,
+    )
 end
 
 ## Fallback
 
 function StatsAPI.fit!(
-    hmm::AbstractHMM,
-    fb_storage::ForwardBackwardStorage,
+    hmm::AbstractLatentStateModel,
+    fb_storage::Union{ForwardBackwardStorage,HSMMForwardBackwardStorage},
     obs_seq::AbstractVector,
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},

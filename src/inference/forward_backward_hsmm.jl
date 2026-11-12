@@ -36,9 +36,28 @@ struct HSMMForwardBackwardStorage{R,M<:AbstractMatrix{R}}
     seq_censored_durations::Vector{Matrix{R}}
 end
 
+Base.eltype(::HSMMForwardBackwardStorage{R}) where {R} = R
+
 # Without `duration_counts`, the counts are `0 × 0`.
 function has_duration_counts(storage::HSMMForwardBackwardStorage)
     return size(storage.completed_durations, 2) > 0
+end
+
+# Without `transition_marginals`, the entries of `ξ` are left unassigned.
+function has_transition_marginals(storage::HSMMForwardBackwardStorage)
+    (; ξ) = storage
+    return isempty(ξ) || isassigned(ξ, lastindex(ξ))
+end
+
+# Sum `ξ[t1:t2-1]` into `ξ[t2]`, which is zero after forward-backward.
+function sum_transition_marginals!(ξ::AbstractVector, t1::Integer, t2::Integer)
+    t1 > t2 && return nothing  # an empty sequence has no ξ[t2] of its own
+    scratch = ξ[t2]
+    fill!(scratch, zero(eltype(scratch)))
+    for t in t1:(t2 - 1)
+        scratch .+= ξ[t]
+    end
+    return nothing
 end
 
 """
@@ -67,7 +86,7 @@ function initialize_forward_backward(
         for t in 1:(T - 1)
             ξ[t] = similar(transition_matrix(hsmm, control_seq[t + 1]), R)
         end
-        ξ[T] = zero(similar(trans, R))  # not used
+        ξ[T] = zero(similar(trans, R))  # scratch space for `fit!`
     end
 
     # Mass entering each state at `t`, and the likelihood of the observations after `t` given
@@ -379,7 +398,7 @@ $(SIGNATURES)
 With `duration_counts=true`, also fill the expected duration counts
 `storage.completed_durations` and `storage.censored_durations`, from which the duration
 distributions can be re-estimated. This requires the corresponding buffers, see
-[`initialize_forward_backward`](@ref).
+[`initialize_forward_backward`](@ref), and is the default when they exist.
 """
 function forward_backward!(
     storage::HSMMForwardBackwardStorage,
@@ -388,7 +407,7 @@ function forward_backward!(
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
     transition_marginals::Bool=true,
-    duration_counts::Bool=false,
+    duration_counts::Bool=has_duration_counts(storage),
 )
     @argcheck !duration_counts || has_duration_counts(storage)
     if seq_ends isa NTuple{1}
