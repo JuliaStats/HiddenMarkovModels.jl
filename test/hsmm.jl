@@ -66,6 +66,12 @@ using Test
         @test_throws ArgumentError HSMM(init, trans, dists, dur_dists[1:1])
         @test_throws ArgumentError HSMM([1.0], trans, dists, dur_dists)
     end
+
+    @testset "Constructor rejects mixed duration families" begin
+        @test_throws ArgumentError HSMM(init, trans, dists, [Geometric(0.4), Poisson(2.0)])
+        # Mixing number types within a family is fine.
+        @test HSMM(init, trans, dists, Geometric[Geometric(0.4), Geometric(0.6f0)]) isa HSMM
+    end
 end
 
 @testset "HSMM sampling" begin
@@ -1833,6 +1839,15 @@ end
         seq_ends = (20,)
         storage = initialize_forward_backward(hsmm, obs_seq, Fill(nothing, 20); seq_ends)
         @test_throws ArgumentError fit!(hsmm, storage, obs_seq; seq_ends)
+        # With room for them, `forward_backward!` fills them by default, like `baum_welch`.
+        storage = initialize_forward_backward(
+            hsmm, obs_seq, Fill(nothing, 20); seq_ends, duration_counts=true
+        )
+        forward_backward!(storage, hsmm, obs_seq, Fill(nothing, 20); seq_ends)
+        hsmm_est = deepcopy(hsmm)
+        fit!(hsmm_est, storage, obs_seq; seq_ends)
+        hsmm_bw, _ = baum_welch(hsmm, obs_seq; max_iterations=1)
+        @test succprob.(hsmm_est.dur_dists) ≈ succprob.(hsmm_bw.dur_dists)
     end
 
     @testset "Transition marginals are required" begin

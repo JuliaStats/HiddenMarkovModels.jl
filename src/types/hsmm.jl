@@ -37,6 +37,9 @@ struct HSMM{
         dists::AbstractVector,
         dur_dists::AbstractVector,
     )
+        D = eltype(dur_dists)
+        @argcheck Base.unwrap_unionall(D) isa DataType && !isabstracttype(D) "The duration \
+        distributions must all come from the same family, got a vector of $D."
         log_init = elementwise_log(init)
         log_trans = elementwise_log(trans)
         hsmm = new{

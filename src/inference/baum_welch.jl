@@ -13,29 +13,6 @@ function baum_welch_has_converged(
     return false
 end
 
-# The E-step: an HSMM also needs the expected duration counts for its M-step.
-function baum_welch_e_step!(
-    fb_storage::ForwardBackwardStorage,
-    hmm::AbstractLatentStateModel,
-    obs_seq::AbstractVector,
-    control_seq::AbstractVector;
-    seq_ends::AbstractVectorOrNTuple{Int},
-)
-    return forward_backward!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
-end
-
-function baum_welch_e_step!(
-    fb_storage::HSMMForwardBackwardStorage,
-    hsmm::AbstractHSMM,
-    obs_seq::AbstractVector,
-    control_seq::AbstractVector;
-    seq_ends::AbstractVectorOrNTuple{Int},
-)
-    return forward_backward!(
-        fb_storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
-    )
-end
-
 """
 $(SIGNATURES)
 """
@@ -54,7 +31,7 @@ function baum_welch!(
     if progress
         @withprogress name = "Baum-Welch" begin
             for iter in 1:max_iterations
-                baum_welch_e_step!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
+                forward_backward!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
                 push!(logL_evolution, logdensityof(hmm) + sum(fb_storage.logL))
                 fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends)
                 @logprogress iter / max_iterations
@@ -65,7 +42,7 @@ function baum_welch!(
         end
     else
         for _ in 1:max_iterations
-            baum_welch_e_step!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
+            forward_backward!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
             push!(logL_evolution, logdensityof(hmm) + sum(fb_storage.logL))
             fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends)
             if baum_welch_has_converged(logL_evolution; atol, loglikelihood_increasing)

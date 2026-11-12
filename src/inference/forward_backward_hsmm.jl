@@ -49,12 +49,11 @@ function has_transition_marginals(storage::HSMMForwardBackwardStorage)
     return isempty(ξ) || isassigned(ξ, lastindex(ξ))
 end
 
-#= Sum `ξ[t1:t2-1]` into `ξ[t2]`, which is zero after forward-backward. Zeroing the stored entries
-instead of the whole matrix keeps the sparsity pattern, so the sum does not allocate. =#
+# Sum `ξ[t1:t2-1]` into `ξ[t2]`, which is zero after forward-backward.
 function sum_transition_marginals!(ξ::AbstractVector, t1::Integer, t2::Integer)
     t1 > t2 && return nothing  # an empty sequence has no ξ[t2] of its own
     scratch = ξ[t2]
-    fill!(mynonzeros(scratch), zero(eltype(scratch)))
+    fill!(scratch, zero(eltype(scratch)))
     for t in t1:(t2 - 1)
         scratch .+= ξ[t]
     end
@@ -87,9 +86,7 @@ function initialize_forward_backward(
         for t in 1:(T - 1)
             ξ[t] = similar(transition_matrix(hsmm, control_seq[t + 1]), R)
         end
-        # Only scratch space, but `zero` would drop the stored entries of a sparse matrix.
-        ξ[T] = similar(trans, R)
-        fill!(mynonzeros(ξ[T]), zero(R))
+        ξ[T] = zero(similar(trans, R))  # scratch space for `fit!`
     end
 
     # Mass entering each state at `t`, and the likelihood of the observations after `t` given
@@ -375,7 +372,7 @@ function _forward_backward!(
         end
     end
     if transition_marginals
-        fill!(mynonzeros(ξ[t2]), zero(R))  # keeps the sparsity pattern
+        ξ[t2] .= zero(R)
     end
 
     return nothing
@@ -401,7 +398,7 @@ $(SIGNATURES)
 With `duration_counts=true`, also fill the expected duration counts
 `storage.completed_durations` and `storage.censored_durations`, from which the duration
 distributions can be re-estimated. This requires the corresponding buffers, see
-[`initialize_forward_backward`](@ref).
+[`initialize_forward_backward`](@ref), and is the default when they exist.
 """
 function forward_backward!(
     storage::HSMMForwardBackwardStorage,
@@ -410,7 +407,7 @@ function forward_backward!(
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
     transition_marginals::Bool=true,
-    duration_counts::Bool=false,
+    duration_counts::Bool=has_duration_counts(storage),
 )
     @argcheck !duration_counts || has_duration_counts(storage)
     if seq_ends isa NTuple{1}
