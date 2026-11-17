@@ -36,6 +36,15 @@ struct HSMMForwardBackwardStorage{R,M<:AbstractMatrix{R}}
     seq_censored_durations::Vector{Matrix{R}}
 end
 
+Base.eltype(::HSMMForwardBackwardStorage{R}) where {R} = R
+
+const AnyForwardBackwardStorage = Union{ForwardBackwardStorage,HSMMForwardBackwardStorage}
+
+# Without `transition_marginals`, the entries of `ξ` are left unassigned.
+function has_transition_marginals(storage::AnyForwardBackwardStorage)
+    return isassigned(storage.ξ, lastindex(storage.ξ))
+end
+
 # Without `duration_counts`, the counts are `0 × 0`.
 function has_duration_counts(storage::HSMMForwardBackwardStorage)
     return size(storage.completed_durations, 2) > 0
@@ -67,7 +76,7 @@ function initialize_forward_backward(
         for t in 1:(T - 1)
             ξ[t] = similar(transition_matrix(hsmm, control_seq[t + 1]), R)
         end
-        ξ[T] = zero(similar(trans, R))  # not used
+        ξ[T] = zero(similar(trans, R))  # scratch space for `fit!`
     end
 
     # Mass entering each state at `t`, and the likelihood of the observations after `t` given
@@ -378,8 +387,10 @@ $(SIGNATURES)
 
 With `duration_counts=true`, also fill the expected duration counts
 `storage.completed_durations` and `storage.censored_durations`, from which the duration
-distributions can be re-estimated. This requires the corresponding buffers, see
-[`initialize_forward_backward`](@ref).
+distributions can be re-estimated.
+
+Both `transition_marginals` and `duration_counts` require the corresponding buffers, see
+[`initialize_forward_backward`](@ref), and default to whether they exist.
 """
 function forward_backward!(
     storage::HSMMForwardBackwardStorage,
@@ -387,9 +398,10 @@ function forward_backward!(
     obs_seq::AbstractVector,
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
-    transition_marginals::Bool=true,
-    duration_counts::Bool=false,
+    transition_marginals::Bool=has_transition_marginals(storage),
+    duration_counts::Bool=has_duration_counts(storage),
 )
+    @argcheck !transition_marginals || has_transition_marginals(storage)
     @argcheck !duration_counts || has_duration_counts(storage)
     if seq_ends isa NTuple{1}
         for k in eachindex(seq_ends)

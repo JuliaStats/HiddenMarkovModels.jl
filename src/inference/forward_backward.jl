@@ -118,3 +118,27 @@ function forward_backward(
     forward_backward!(storage, hmm, obs_seq, control_seq; seq_ends, transition_marginals)
     return storage.γ, storage.logL
 end
+
+# Sum `ξ[t1:t2-1]` into `ξ[t2]` for every sequence, since `ξ[t2]` is zero anyway.
+function sum_transition_marginals!(ξ::AbstractVector, seq_ends::AbstractVectorOrNTuple{Int})
+    if seq_ends isa NTuple
+        for k in eachindex(seq_ends)
+            _sum_transition_marginals!(ξ, seq_limits(seq_ends, k)...)
+        end
+    else
+        @threads for k in eachindex(seq_ends)
+            _sum_transition_marginals!(ξ, seq_limits(seq_ends, k)...)
+        end
+    end
+    return nothing
+end
+
+function _sum_transition_marginals!(ξ::AbstractVector, t1::Integer, t2::Integer)
+    t1 > t2 && return nothing  # an empty sequence has no ξ[t2] of its own
+    scratch = ξ[t2]
+    fill!(scratch, zero(eltype(scratch)))
+    for t in t1:(t2 - 1)
+        scratch .+= ξ[t]
+    end
+    return nothing
+end

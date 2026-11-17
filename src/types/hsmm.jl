@@ -37,6 +37,9 @@ struct HSMM{
         dists::AbstractVector,
         dur_dists::AbstractVector,
     )
+        D = eltype(dur_dists)
+        @argcheck !isabstracttype(D) && !(D isa Union) "The duration \
+        distributions must all come from the same family, got a vector of $D."
         log_init = elementwise_log(init)
         log_trans = elementwise_log(trans)
         hsmm = new{
@@ -67,3 +70,52 @@ transition_matrix(hsmm::HSMM) = hsmm.trans
 log_transition_matrix(hsmm::HSMM) = hsmm.logtrans
 obs_distributions(hsmm::HSMM) = hsmm.dists
 duration_distributions(hsmm::HSMM) = hsmm.dur_dists
+
+## Fitting
+
+function StatsAPI.fit!(
+    hsmm::HSMM,
+    fb_storage::HSMMForwardBackwardStorage,
+    obs_seq::AbstractVector;
+    seq_ends::AbstractVectorOrNTuple{Int},
+)
+    (; γ, ξ, completed_durations, censored_durations) = fb_storage
+    T = length(obs_seq)
+    @argcheck !isempty(seq_ends) && last(seq_ends) == T
+    @argcheck has_transition_marginals(fb_storage)
+    @argcheck has_duration_counts(fb_storage)
+    # Fit states, summing ξ into ξ[T] since the last nonempty sequence ends at T
+    sum_transition_marginals!(ξ, seq_ends)
+    total = ξ[T]
+    fill!(hsmm.init, zero(eltype(hsmm.init)))
+    for k in eachindex(seq_ends)
+        t1, t2 = seq_limits(seq_ends, k)
+        t1 > t2 && continue  # empty sequence
+        hsmm.init .+= view(γ, :, t1)
+        t2 < T && (total .+= ξ[t2])
+    end
+    sum_to_one!(hsmm.init)
+    # Skip states never left, whose exits may underflow in either count
+    for i in 1:length(hsmm)
+        total_row = view(total, i, :)
+        completed = view(completed_durations, :, i)
+        (iszero(sum(total_row)) || iszero(sum(completed))) && continue
+        trans_row = view(hsmm.trans, i, :)
+        trans_row .= total_row
+        sum_to_one!(trans_row)
+        censored = view(censored_durations, :, i)
+        fit_duration_in_sequence!(hsmm.dur_dists, i, completed, censored)
+    end
+    # Fit observations, skipping states never visited
+    for i in 1:length(hsmm)
+        γ_i = view(γ, i, :)
+        iszero(sum(γ_i)) && continue
+        fit_in_sequence!(hsmm.dists, i, obs_seq, γ_i)
+    end
+    # Update logs
+    hsmm.loginit .= log.(hsmm.init)
+    mynonzeros(hsmm.logtrans) .= log.(mynonzeros(hsmm.trans))
+    # Safety check
+    @argcheck valid_hsmm(hsmm)
+    return nothing
+end

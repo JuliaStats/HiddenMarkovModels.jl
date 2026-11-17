@@ -78,7 +78,7 @@ function fit_duration_in_sequence!(
 )
     @argcheck sum(completed) > 0 "Cannot fit the duration of state $i because none of its \
     stays ends inside a sequence. Try skipping this state and keeping its current duration \
-    distribution."
+    distribution, as `fit!` does."
     weights = impute_censored_durations(dists[i], completed, censored)
     fit_in_sequence!(dists, i, 0:(length(weights) - 1), weights)
     return nothing
