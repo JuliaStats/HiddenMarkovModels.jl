@@ -2,7 +2,7 @@ module HMMTest
 
 using BenchmarkTools: @ballocated
 using HiddenMarkovModels
-using HiddenMarkovModels: AbstractVectorOrNTuple
+using HiddenMarkovModels: AbstractLatentStateModel, AbstractVectorOrNTuple
 import HiddenMarkovModels as HMMs
 using JET: @test_opt, @test_call
 using Random: AbstractRNG
