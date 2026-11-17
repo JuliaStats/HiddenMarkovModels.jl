@@ -37,7 +37,7 @@ abstract type AbstractHMM <: AbstractLatentStateModel end
     )
 
 Update `hmm` or `hsmm` in-place based on information generated during forward-backward.
-For an HSMM, `fb_storage` must have been created with `duration_counts=true`.
+For an HSMM, `fb_storage` must have been created with `duration_counts=true`, and `seq_ends` must end at `length(obs_seq)`.
 
 This function is allowed to reuse `fb_storage` as a scratch space, so its contents should not be trusted afterwards.
 """

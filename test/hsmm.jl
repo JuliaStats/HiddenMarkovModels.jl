@@ -1627,6 +1627,18 @@ function call_fit!(hsmm, storage, obs_seq, control_seq, seq_ends)
     return fit!(hsmm, storage, obs_seq, control_seq; seq_ends)
 end
 
+# Two states, and sequences of very different lengths, including one of length 1.
+function two_state_problem()
+    hsmm = HSMM(
+        [0.6, 0.4],
+        [0.0 1.0; 1.0 0.0],
+        [Normal(0.0), Normal(3.0)],
+        [Geometric(0.3), Geometric(0.5)],
+    )
+    obs_seq, seq_ends = rand_sequences(StableRNG(507), hsmm, [30, 1, 45, 20])
+    return hsmm, obs_seq, seq_ends
+end
+
 @testset "HSMM Baum-Welch" begin
     @testset "Recovery" begin
         init = [0.5, 0.3, 0.2]
@@ -1646,13 +1658,15 @@ end
             hsmm_guess, obs_seq; seq_ends, max_duration=30
         )
         # The guess must not be modified, even though the duration M-step writes `dists[i] = ...`.
-        @test hsmm_guess.dur_dists == fill(Poisson(2.0), 3)
+        @test duration_distributions(hsmm_guess) == fill(Poisson(2.0), 3)
         @test all(>=(0), diff(logL_evolution))
-        @test all(isapprox.(hsmm_est.init, init; atol=0.15))
-        @test all(isapprox.(hsmm_est.trans, trans; atol=0.05))
-        @test all(isapprox.(mean.(hsmm_est.dists), mean.(dists); atol=0.1))
-        @test all(isapprox.(std.(hsmm_est.dists), std.(dists); atol=0.05))
-        @test all(isapprox.(mean.(hsmm_est.dur_dists), mean.(dur_dists); rtol=0.08))
+        @test all(isapprox.(initialization(hsmm_est), init; atol=0.15))
+        @test all(isapprox.(transition_matrix(hsmm_est), trans; atol=0.05))
+        @test all(isapprox.(mean.(obs_distributions(hsmm_est)), mean.(dists); atol=0.1))
+        @test all(isapprox.(std.(obs_distributions(hsmm_est)), std.(dists); atol=0.05))
+        @test all(
+            isapprox.(mean.(duration_distributions(hsmm_est)), mean.(dur_dists); rtol=0.08)
+        )
     end
 
     @testset "Short sequences" begin
@@ -1671,68 +1685,74 @@ end
             [Poisson(3.0), Poisson(10.0)],
         )
         hsmm_est, _ = baum_welch(hsmm_guess, obs_seq; seq_ends)
-        @test all(isapprox.(mean.(hsmm_est.dur_dists), mean.(dur_dists); rtol=0.05))
-        @test all(isapprox.(mean.(hsmm_est.dists), mean.(dists); atol=0.05))
+        @test all(
+            isapprox.(mean.(duration_distributions(hsmm_est)), mean.(dur_dists); rtol=0.05)
+        )
+        @test all(isapprox.(mean.(obs_distributions(hsmm_est)), mean.(dists); atol=0.05))
     end
 
     @testset "Exact equivalence with an HMM under geometric sojourns" begin
-        hmm_trans = [0.7 0.2 0.1; 0.3 0.5 0.2; 0.25 0.25 0.5]
-        hmm = HMM([0.5, 0.3, 0.2], hmm_trans, [Normal(0.0), Normal(5.0), Normal(10.0)])
-        hsmm_from_hmm(hmm) = HSMM(
-            hmm.init,
-            [i == j ? 0.0 : hmm.trans[i, j] / (1 - hmm.trans[i, i]) for i in 1:3, j in 1:3],
-            hmm.dists,
-            [Geometric(1 - hmm.trans[i, i]) for i in 1:3],
+        hmm = HMM(
+            [0.5, 0.3, 0.2],
+            [0.7 0.2 0.1; 0.3 0.5 0.2; 0.25 0.25 0.5],
+            [Normal(0.0), Normal(5.0), Normal(10.0)],
         )
+        function hsmm_from_hmm(hmm)
+            A = transition_matrix(hmm)
+            return HSMM(
+                initialization(hmm),
+                [i == j ? 0.0 : A[i, j] / (1 - A[i, i]) for i in 1:3, j in 1:3],
+                obs_distributions(hmm),
+                [Geometric(1 - A[i, i]) for i in 1:3],
+            )
+        end
         # Run a fixed number of iterations, so that both runs stop at the same one.
         kwargs = (; max_iterations=10, atol=-Inf, loglikelihood_increasing=false)
         # Short sequences make the censored sojourns matter.
-        for lengths in ([80, 120], fill(6, 30))
-            obs_seq, seq_ends = rand_sequences(StableRNG(length(lengths)), hmm, lengths)
+        for (seed, lengths) in ((533, [80, 120]), (534, fill(6, 30)))
+            obs_seq, seq_ends = rand_sequences(StableRNG(seed), hmm, lengths)
             hmm_est, logL_hmm = baum_welch(hmm, obs_seq; seq_ends, kwargs...)
             hsmm_est, logL_hsmm = baum_welch(
                 hsmm_from_hmm(hmm), obs_seq; seq_ends, kwargs...
             )
             hsmm_ref = hsmm_from_hmm(hmm_est)
             @test logL_hsmm ≈ logL_hmm
-            @test hsmm_est.init ≈ hsmm_ref.init
-            @test hsmm_est.trans ≈ hsmm_ref.trans
-            @test succprob.(hsmm_est.dur_dists) ≈ succprob.(hsmm_ref.dur_dists)
-            @test mean.(hsmm_est.dists) ≈ mean.(hsmm_ref.dists)
-            @test std.(hsmm_est.dists) ≈ std.(hsmm_ref.dists)
+            @test initialization(hsmm_est) ≈ initialization(hsmm_ref)
+            @test transition_matrix(hsmm_est) ≈ transition_matrix(hsmm_ref)
+            @test succprob.(duration_distributions(hsmm_est)) ≈
+                succprob.(duration_distributions(hsmm_ref))
+            @test mean.(obs_distributions(hsmm_est)) ≈ mean.(obs_distributions(hsmm_ref))
+            @test std.(obs_distributions(hsmm_est)) ≈ std.(obs_distributions(hsmm_ref))
         end
+        # `max_duration` only applies to HSMMs.
+        @test_throws MethodError baum_welch(hmm, randn(10); max_duration=5)
     end
-
-    hsmm_two = HSMM(
-        [0.6, 0.4],
-        [0.0 1.0; 1.0 0.0],
-        [Normal(0.0), Normal(3.0)],
-        [Geometric(0.3), Geometric(0.5)],
-    )
-    obs_seq_two, seq_ends_two = rand_sequences(StableRNG(507), hsmm_two, [30, 1, 45, 20])
-    hsmm_vec, logL_vec = baum_welch(
-        hsmm_two, obs_seq_two; seq_ends=seq_ends_two, max_iterations=10
-    )
 
     @testset "Multiple sequences of differing lengths" begin
         # Vectors of sequence ends go through the threaded loops, tuples do not.
+        hsmm, obs_seq, seq_ends = two_state_problem()
+        hsmm_vec, logL_vec = baum_welch(hsmm, obs_seq; seq_ends, max_iterations=10)
         hsmm_tup, logL_tup = baum_welch(
-            hsmm_two, obs_seq_two; seq_ends=Tuple(seq_ends_two), max_iterations=10
+            hsmm, obs_seq; seq_ends=Tuple(seq_ends), max_iterations=10
         )
         @test logL_vec ≈ logL_tup
-        @test hsmm_vec.trans ≈ hsmm_tup.trans
-        @test succprob.(hsmm_vec.dur_dists) ≈ succprob.(hsmm_tup.dur_dists)
+        @test transition_matrix(hsmm_vec) ≈ transition_matrix(hsmm_tup)
+        @test succprob.(duration_distributions(hsmm_vec)) ≈
+            succprob.(duration_distributions(hsmm_tup))
     end
 
     @testset "Empty subsequences" begin
+        hsmm, obs_seq, seq_ends = two_state_problem()
+        hsmm_ref, logL_ref = baum_welch(hsmm, obs_seq; seq_ends, max_iterations=10)
         for seq_ends in ([0, 30, 30, 31, 76, 96], (30, 31, 31, 76, 96, 96))
             hsmm_empty, logL_empty = baum_welch(
-                hsmm_two, obs_seq_two; seq_ends, max_iterations=10, max_duration=45
+                hsmm, obs_seq; seq_ends, max_iterations=10, max_duration=45
             )
-            @test logL_empty ≈ logL_vec
-            @test hsmm_empty.init ≈ hsmm_vec.init
-            @test hsmm_empty.trans ≈ hsmm_vec.trans
-            @test succprob.(hsmm_empty.dur_dists) ≈ succprob.(hsmm_vec.dur_dists)
+            @test logL_empty ≈ logL_ref
+            @test initialization(hsmm_empty) ≈ initialization(hsmm_ref)
+            @test transition_matrix(hsmm_empty) ≈ transition_matrix(hsmm_ref)
+            @test succprob.(duration_distributions(hsmm_empty)) ≈
+                succprob.(duration_distributions(hsmm_ref))
         end
     end
 
@@ -1743,27 +1763,23 @@ end
         obs_seq, seq_ends = rand_sequences(
             StableRNG(509), HSMM([0.5, 0.3, 0.2], trans, dists, durs), fill(100, 3)
         )
-        hsmm_guess = HSMM(
-            [0.5, 0.3, 0.2],
-            sparse([0.0 0.3 0.7; 1.0 0.0 0.0; 1.0 0.0 0.0]),
-            [Normal(0.5), Normal(2.5), Normal(5.0)],
-            fill(Geometric(0.5), 3),
+        init_guess = [0.5, 0.3, 0.2]
+        trans_guess = sparse([0.0 0.3 0.7; 1.0 0.0 0.0; 1.0 0.0 0.0])
+        dists_guess = [Normal(0.5), Normal(2.5), Normal(5.0)]
+        durs_guess = fill(Geometric(0.5), 3)
+        hsmm_est, logL_evolution = baum_welch(
+            HSMM(init_guess, trans_guess, dists_guess, durs_guess), obs_seq; seq_ends
         )
-        hsmm_est, logL_evolution = baum_welch(hsmm_guess, obs_seq; seq_ends)
         hsmm_dense, logL_dense = baum_welch(
-            HSMM(
-                hsmm_guess.init,
-                Matrix(hsmm_guess.trans),
-                hsmm_guess.dists,
-                hsmm_guess.dur_dists,
-            ),
+            HSMM(init_guess, Matrix(trans_guess), dists_guess, durs_guess),
             obs_seq;
             seq_ends,
         )
         @test logL_evolution ≈ logL_dense
-        @test hsmm_est.trans isa SparseMatrixCSC
-        @test nnz(hsmm_est.trans) == nnz(hsmm_est.logtrans) == nnz(trans)
-        @test hsmm_est.trans ≈ hsmm_dense.trans
+        @test transition_matrix(hsmm_est) isa SparseMatrixCSC
+        @test nnz(transition_matrix(hsmm_est)) == nnz(trans)
+        @test nnz(log_transition_matrix(hsmm_est)) == nnz(trans)
+        @test transition_matrix(hsmm_est) ≈ transition_matrix(hsmm_dense)
         # Summing ξ must not drop the sparsity pattern of the scratch space.
         hsmm = deepcopy(hsmm_est)
         control_seq = Fill(nothing, length(obs_seq))
@@ -1795,12 +1811,14 @@ end
         for dur_dists in (Poisson.([2.0, 3.0, 4.0]), Geometric.([0.5, 0.3, 0.2]))
             hsmm_guess = HSMM(fill(1 / 3, 3), trans_guess, dists, dur_dists)
             hsmm_est, logL_evolution = baum_welch(hsmm_guess, obs_seq; seq_ends)
+            trans_est = transition_matrix(hsmm_est)
+            dur_dists_est = duration_distributions(hsmm_est)
             @test all(>=(0), diff(logL_evolution))
-            @test hsmm_est.init == [1.0, 0.0, 0.0]
-            @test hsmm_est.trans[1:2, :] == [0.0 1.0 0.0; 0.0 0.0 1.0]
-            @test hsmm_est.trans[3, :] == trans_guess[3, :]
-            @test hsmm_est.dur_dists[1:2] != dur_dists[1:2]
-            @test hsmm_est.dur_dists[3] == dur_dists[3]
+            @test initialization(hsmm_est) == [1.0, 0.0, 0.0]
+            @test trans_est[1:2, :] == [0.0 1.0 0.0; 0.0 0.0 1.0]
+            @test trans_est[3, :] == trans_guess[3, :]
+            @test dur_dists_est[1:2] != dur_dists[1:2]
+            @test dur_dists_est[3] == dur_dists[3]
         end
     end
 
@@ -1812,10 +1830,10 @@ end
         hsmm = HSMM([0.5, 0.5, 0.0], trans, dists, durs)
         obs_seq, seq_ends = rand_sequences(StableRNG(523), hsmm, fill(50, 4))
         hsmm_est, _ = baum_welch(hsmm, obs_seq; seq_ends)
-        @test hsmm_est.init[3] == 0
-        @test hsmm_est.trans[3, :] == trans[3, :]
-        @test hsmm_est.dists[3] == dists[3]
-        @test hsmm_est.dur_dists[3] == durs[3]
+        @test initialization(hsmm_est)[3] == 0
+        @test transition_matrix(hsmm_est)[3, :] == trans[3, :]
+        @test obs_distributions(hsmm_est)[3] == dists[3]
+        @test duration_distributions(hsmm_est)[3] == durs[3]
     end
 
     @testset "Type promotion" begin
@@ -1829,8 +1847,8 @@ end
         obs_seq = Float32.(rand(StableRNG(519), hsmm, 200).obs_seq)
         hsmm_est, logL_evolution = baum_welch(hsmm, obs_seq)
         @test logL_evolution isa Vector{Float64}
-        @test hsmm_est.trans isa Matrix{Float32}
-        @test hsmm_est.dur_dists isa Vector{Geometric{Float64}}
+        @test transition_matrix(hsmm_est) isa Matrix{Float32}
+        @test duration_distributions(hsmm_est) isa Vector{Geometric{Float64}}
     end
 
     @testset "Duration counts are required" begin
@@ -1847,7 +1865,8 @@ end
         hsmm_est = deepcopy(hsmm)
         fit!(hsmm_est, storage, obs_seq; seq_ends)
         hsmm_bw, _ = baum_welch(hsmm, obs_seq; max_iterations=1)
-        @test succprob.(hsmm_est.dur_dists) ≈ succprob.(hsmm_bw.dur_dists)
+        @test succprob.(duration_distributions(hsmm_est)) ≈
+            succprob.(duration_distributions(hsmm_bw))
     end
 
     @testset "Transition marginals are required" begin
@@ -1863,15 +1882,11 @@ end
             transition_marginals=false,
             duration_counts=true,
         )
-        forward_backward!(
-            storage,
-            hsmm,
-            obs_seq,
-            control_seq;
-            seq_ends,
-            transition_marginals=false,
-            duration_counts=true,
+        @test_throws ArgumentError forward_backward!(
+            storage, hsmm, obs_seq, control_seq; seq_ends, transition_marginals=true
         )
+        # Without room for them, `forward_backward!` skips them by default.
+        forward_backward!(storage, hsmm, obs_seq, control_seq; seq_ends)
         @test_throws ArgumentError fit!(hsmm, storage, obs_seq; seq_ends)
     end
 
@@ -1884,9 +1899,7 @@ end
         storage = initialize_forward_backward(
             hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
         )
-        forward_backward!(
-            storage, hsmm, obs_seq, control_seq; seq_ends, duration_counts=true
-        )
+        forward_backward!(storage, hsmm, obs_seq, control_seq; seq_ends)
         @test_throws ArgumentError fit!(hsmm, storage, obs_seq; seq_ends)
     end
 
@@ -1897,8 +1910,8 @@ end
         hsmm_a, logL_a = baum_welch(hsmm, obs_seq; seq_ends=[10, 30], max_iterations=5)
         hsmm_b, logL_b = baum_welch(hsmm, obs_seq; seq_ends=[10, 30, 30], max_iterations=5)
         @test logL_a ≈ logL_b
-        @test hsmm_a.trans ≈ hsmm_b.trans
-        @test hsmm_a.init ≈ hsmm_b.init
+        @test transition_matrix(hsmm_a) ≈ transition_matrix(hsmm_b)
+        @test initialization(hsmm_a) ≈ initialization(hsmm_b)
     end
 
     @testset "Allocations" begin

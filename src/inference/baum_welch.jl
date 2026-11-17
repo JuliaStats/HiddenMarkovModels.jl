@@ -17,9 +17,9 @@ end
 $(SIGNATURES)
 """
 function baum_welch!(
-    fb_storage::Union{ForwardBackwardStorage,HSMMForwardBackwardStorage},
+    fb_storage::AnyForwardBackwardStorage,
     logL_evolution::Vector,
-    hmm::AbstractLatentStateModel,
+    model::AbstractLatentStateModel,
     obs_seq::AbstractVector,
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
@@ -31,9 +31,9 @@ function baum_welch!(
     if progress
         @withprogress name = "Baum-Welch" begin
             for iter in 1:max_iterations
-                forward_backward!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
-                push!(logL_evolution, logdensityof(hmm) + sum(fb_storage.logL))
-                fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends)
+                forward_backward!(fb_storage, model, obs_seq, control_seq; seq_ends)
+                push!(logL_evolution, logdensityof(model) + sum(fb_storage.logL))
+                fit!(model, fb_storage, obs_seq, control_seq; seq_ends)
                 @logprogress iter / max_iterations
                 if baum_welch_has_converged(logL_evolution; atol, loglikelihood_increasing)
                     break
@@ -42,9 +42,9 @@ function baum_welch!(
         end
     else
         for _ in 1:max_iterations
-            forward_backward!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
-            push!(logL_evolution, logdensityof(hmm) + sum(fb_storage.logL))
-            fit!(hmm, fb_storage, obs_seq, control_seq; seq_ends)
+            forward_backward!(fb_storage, model, obs_seq, control_seq; seq_ends)
+            push!(logL_evolution, logdensityof(model) + sum(fb_storage.logL))
+            fit!(model, fb_storage, obs_seq, control_seq; seq_ends)
             if baum_welch_has_converged(logL_evolution; atol, loglikelihood_increasing)
                 break
             end
@@ -53,68 +53,56 @@ function baum_welch!(
     return nothing
 end
 
-# Run Baum-Welch on `model`, which is modified, with storage already allocated for it.
-function baum_welch_with_storage(
-    model::AbstractLatentStateModel,
-    fb_storage,
-    obs_seq::AbstractVector,
-    control_seq::AbstractVector;
-    seq_ends::AbstractVectorOrNTuple{Int},
-    atol,
-    max_iterations,
-    loglikelihood_increasing,
-    progress::Bool,
+function initialize_baum_welch(
+    hmm::AbstractHMM, obs_seq, control_seq; seq_ends, max_duration::Nothing
 )
+    return initialize_forward_backward(hmm, obs_seq, control_seq; seq_ends)
+end
+
+function initialize_baum_welch(
+    hsmm::AbstractHSMM, obs_seq, control_seq; seq_ends, max_duration::Union{Nothing,Int}
+)
+    max_duration = something(max_duration, longest_sequence(seq_ends))
+    return initialize_forward_backward(
+        hsmm, obs_seq, control_seq; seq_ends, max_duration, duration_counts=true
+    )
+end
+
+"""
+$(SIGNATURES)
+
+Apply the Baum-Welch algorithm to estimate the parameters of an HMM or HSMM on `obs_seq`, starting from `hmm_guess`.
+For an HSMM, the duration distributions are fitted with [`HiddenMarkovModels.fit_duration_in_sequence!`](@ref).
+
+Return a tuple `(hmm_est, loglikelihood_evolution)` where `hmm_est` is the estimated model and `loglikelihood_evolution` is a vector of loglikelihood values, one per iteration of the algorithm.
+
+# Keyword arguments
+
+- `atol`: minimum loglikelihood increase at an iteration of the algorithm (otherwise the algorithm is deemed to have converged)
+- `max_iterations`: maximum number of iterations of the algorithm
+- `loglikelihood_increasing`: whether to throw an error if the loglikelihood decreases
+- `progress`: whether to emit progress log records (rendered as a bar in REPL with `TerminalLoggers`, natively in Pluto, Jupyter and VS Code); off by default to keep the loop allocation-free
+- `max_duration` (HSMM only): maximum sojourn length considered, as in [`forward`](@ref)
+"""
+function baum_welch(
+    hmm_guess::AbstractLatentStateModel,
+    obs_seq::AbstractVector,
+    control_seq::AbstractVector=Fill(nothing, length(obs_seq));
+    seq_ends::AbstractVectorOrNTuple{Int}=(length(obs_seq),),
+    atol=1e-5,
+    max_iterations=100,
+    loglikelihood_increasing=true,
+    progress::Bool=false,
+    max_duration::Union{Nothing,Int}=nothing,
+)
+    hmm = deepcopy(hmm_guess)
+    fb_storage = initialize_baum_welch(hmm, obs_seq, control_seq; seq_ends, max_duration)
     logL_evolution = eltype(fb_storage)[]
     sizehint!(logL_evolution, max_iterations)
     baum_welch!(
         fb_storage,
         logL_evolution,
-        model,
-        obs_seq,
-        control_seq;
-        seq_ends,
-        atol,
-        max_iterations,
-        loglikelihood_increasing,
-        progress,
-    )
-    return model, logL_evolution
-end
-
-const BAUM_WELCH_KWARGS_DOC = """
-- `atol`: minimum loglikelihood increase at an iteration of the algorithm (otherwise the algorithm is deemed to have converged)
-- `max_iterations`: maximum number of iterations of the algorithm
-- `loglikelihood_increasing`: whether to throw an error if the loglikelihood decreases
-- `progress`: whether to emit progress log records (rendered as a bar in REPL with `TerminalLoggers`, natively in Pluto, Jupyter and VS Code); off by default to keep the loop allocation-free
-"""
-
-"""
-$(SIGNATURES)
-
-Apply the Baum-Welch algorithm to estimate the parameters of an HMM on `obs_seq`, starting from `hmm_guess`.
-
-Return a tuple `(hmm_est, loglikelihood_evolution)` where `hmm_est` is the estimated HMM and `loglikelihood_evolution` is a vector of loglikelihood values, one per iteration of the algorithm.
-
-# Keyword arguments
-
-$BAUM_WELCH_KWARGS_DOC
-"""
-function baum_welch(
-    hmm_guess::AbstractHMM,
-    obs_seq::AbstractVector,
-    control_seq::AbstractVector=Fill(nothing, length(obs_seq));
-    seq_ends::AbstractVectorOrNTuple{Int}=(length(obs_seq),),
-    atol=1e-5,
-    max_iterations=100,
-    loglikelihood_increasing=true,
-    progress::Bool=false,
-)
-    hmm = deepcopy(hmm_guess)
-    fb_storage = initialize_forward_backward(hmm, obs_seq, control_seq; seq_ends)
-    return baum_welch_with_storage(
         hmm,
-        fb_storage,
         obs_seq,
         control_seq;
         seq_ends,
@@ -123,57 +111,17 @@ function baum_welch(
         loglikelihood_increasing,
         progress,
     )
-end
-
-"""
-$(SIGNATURES)
-
-Apply the Baum-Welch algorithm to estimate the parameters of an HSMM on `obs_seq`, starting from `hsmm_guess`.
-The duration distributions are fitted with [`HiddenMarkovModels.fit_duration_in_sequence!`](@ref).
-
-Return a tuple `(hsmm_est, loglikelihood_evolution)` where `hsmm_est` is the estimated HSMM and `loglikelihood_evolution` is a vector of loglikelihood values, one per iteration of the algorithm.
-
-# Keyword arguments
-
-- `max_duration`: maximum sojourn length considered, as in [`forward`](@ref)
-$BAUM_WELCH_KWARGS_DOC
-"""
-function baum_welch(
-    hsmm_guess::AbstractHSMM,
-    obs_seq::AbstractVector,
-    control_seq::AbstractVector=Fill(nothing, length(obs_seq));
-    seq_ends::AbstractVectorOrNTuple{Int}=(length(obs_seq),),
-    max_duration::Int=longest_sequence(seq_ends),
-    atol=1e-5,
-    max_iterations=100,
-    loglikelihood_increasing=true,
-    progress::Bool=false,
-)
-    hsmm = deepcopy(hsmm_guess)
-    fb_storage = initialize_forward_backward(
-        hsmm, obs_seq, control_seq; seq_ends, max_duration, duration_counts=true
-    )
-    return baum_welch_with_storage(
-        hsmm,
-        fb_storage,
-        obs_seq,
-        control_seq;
-        seq_ends,
-        atol,
-        max_iterations,
-        loglikelihood_increasing,
-        progress,
-    )
+    return hmm, logL_evolution
 end
 
 ## Fallback
 
 function StatsAPI.fit!(
-    hmm::AbstractLatentStateModel,
-    fb_storage::Union{ForwardBackwardStorage,HSMMForwardBackwardStorage},
+    model::AbstractLatentStateModel,
+    fb_storage::AnyForwardBackwardStorage,
     obs_seq::AbstractVector,
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
 )
-    return fit!(hmm, fb_storage, obs_seq; seq_ends)
+    return fit!(model, fb_storage, obs_seq; seq_ends)
 end

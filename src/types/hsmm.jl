@@ -38,7 +38,7 @@ struct HSMM{
         dur_dists::AbstractVector,
     )
         D = eltype(dur_dists)
-        @argcheck Base.unwrap_unionall(D) isa DataType && !isabstracttype(D) "The duration \
+        @argcheck !isabstracttype(D) && !(D isa Union) "The duration \
         distributions must all come from the same family, got a vector of $D."
         log_init = elementwise_log(init)
         log_trans = elementwise_log(trans)
@@ -81,43 +81,32 @@ function StatsAPI.fit!(
 )
     (; γ, ξ, completed_durations, censored_durations) = fb_storage
     T = length(obs_seq)
-    # The columns of γ and ξ past the last sequence are never written by forward-backward.
     @argcheck !isempty(seq_ends) && last(seq_ends) == T
     @argcheck has_transition_marginals(fb_storage)
     @argcheck has_duration_counts(fb_storage)
-    # Sum ξ within each sequence into ξ[t2], which forward-backward zeroes at every sequence end.
-    if seq_ends isa NTuple
-        for k in eachindex(seq_ends)
-            sum_transition_marginals!(ξ, seq_limits(seq_ends, k)...)
-        end
-    else
-        @threads for k in eachindex(seq_ends)
-            sum_transition_marginals!(ξ, seq_limits(seq_ends, k)...)
-        end
-    end
-    # Fit states. Since last(seq_ends) == T, the last nonempty sequence ends at T.
-    fill!(hsmm.init, zero(eltype(hsmm.init)))
+    # Fit states, summing ξ into ξ[T] since the last nonempty sequence ends at T
+    sum_transition_marginals!(ξ, seq_ends)
     total = ξ[T]
+    fill!(hsmm.init, zero(eltype(hsmm.init)))
     for k in eachindex(seq_ends)
         t1, t2 = seq_limits(seq_ends, k)
-        t1 > t2 && continue  # an empty sequence has no first state and no ξ[t2] of its own
+        t1 > t2 && continue  # empty sequence
         hsmm.init .+= view(γ, :, t1)
         t2 < T && (total .+= ξ[t2])
     end
     sum_to_one!(hsmm.init)
-    #= A state that is never left keeps its transitions and its duration, instead of getting
-    0 / 0 or an MLE with an infinite mean. Its exits are counted both by ξ and by the completed
-    durations, which can underflow separately, so it is skipped if either is zero. =#
+    # Skip states never left, whose exits may underflow in either count
     for i in 1:length(hsmm)
-        trans_row, total_row = view(hsmm.trans, i, :), view(total, i, :)
+        total_row = view(total, i, :)
         completed = view(completed_durations, :, i)
         (iszero(sum(total_row)) || iszero(sum(completed))) && continue
+        trans_row = view(hsmm.trans, i, :)
         trans_row .= total_row
         sum_to_one!(trans_row)
         censored = view(censored_durations, :, i)
         fit_duration_in_sequence!(hsmm.dur_dists, i, completed, censored)
     end
-    # Fit observations, except for states never visited, whose weights are all zero.
+    # Fit observations, skipping states never visited
     for i in 1:length(hsmm)
         γ_i = view(γ, i, :)
         iszero(sum(γ_i)) && continue
