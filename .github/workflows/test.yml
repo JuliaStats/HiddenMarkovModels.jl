@@ -25,6 +25,8 @@ jobs:
           - "HMMBase"
     env:
       JULIA_HMM_TEST_SUITE: ${{ matrix.test_suite }}
+      # Several sequences are processed in parallel, which only gets tested with threads.
+      JULIA_NUM_THREADS: "2"
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
