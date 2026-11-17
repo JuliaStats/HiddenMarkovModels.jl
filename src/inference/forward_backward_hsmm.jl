@@ -142,7 +142,6 @@ function accumulate_segments!(
     storage::HSMMForwardBackwardStorage{R},
     k::Integer,
     s::Integer,
-    t1::Integer,
     t2::Integer,
     max_duration::Integer,
     duration_counts::Bool,
@@ -351,7 +350,7 @@ function _forward_backward!(
         else
             accumulate_incoming!(view(log_starts, :, s), log_ends, log_trans, s - 1)
         end
-        accumulate_segments!(storage, k, s, t1, t2, support, duration_counts)
+        accumulate_segments!(storage, k, s, t2, support, duration_counts)
         if s > t1
             propagate_backward!(log_after_end, log_from_start, log_trans, s - 1)
             if transition_marginals

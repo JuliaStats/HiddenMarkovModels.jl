@@ -475,7 +475,6 @@ end
     end
 
     @testset "Multiple sequences of differing lengths" begin
-        # Regression test for a race in the observation prefix sums.
         rng = StableRNG(15)
         hsmm = rand_hsmm(rng, 3)
         lengths = (4, 11, 7, 9, 5, 13)
@@ -793,7 +792,7 @@ end
         end
 
         # Here `b[1,t] = 0` whenever `obs_seq[t] = 1`, but as a `Dual`, so its log has value
-        # `-Inf` with NaN partials. It must still be caught by the zero count of the prefix sums.
+        # `-Inf` with NaN partials, which must not leak into the gradient.
         function impossible_obs(θ)
             trans = [0.0 1.0; 1.0 0.0]
             dists = [
@@ -1361,17 +1360,16 @@ end
         hsmm = HSMM(
             init, trans, [Normal(0.0), Normal(3.0)], [Geometric(0.1), Geometric(0.1)]
         )
-        obs_seq = [zeros(6); fill(3.0, 2)]
+        # Distinct observations avoid exact ties between optimal paths.
+        obs_seq = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 3.0, 3.0]
         T = length(obs_seq)
         results = [viterbi(hsmm, obs_seq; max_duration) for max_duration in 1:T]
         logLs = [only(logL) for (_, logL) in results]
         @test issorted(logLs)
         for D in 2:T
-            # The optimum only improves when it needs a sojourn of length `D` (ties can go either way).
+            # The optimum improves exactly when it needs a sojourn of length `D`.
             q = first(results[D])
-            if !(logLs[D] ≈ logLs[D - 1])
-                @test longest_segment(q) == D
-            end
+            @test (logLs[D] > logLs[D - 1]) == (longest_segment(q) == D)
         end
         @test logLs[T] > logLs[1]
     end
