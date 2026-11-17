@@ -84,13 +84,12 @@ function StatsAPI.fit!(
     @argcheck !isempty(seq_ends) && last(seq_ends) == T
     @argcheck has_transition_marginals(fb_storage)
     @argcheck has_duration_counts(fb_storage)
-    # Fit states, summing ξ into ξ[T] since the last nonempty sequence ends at T
+    # Fit states, summing ξ into ξ[T] since the last sequence ends at T
     sum_transition_marginals!(ξ, seq_ends)
     total = ξ[T]
     fill!(hsmm.init, zero(eltype(hsmm.init)))
     for k in eachindex(seq_ends)
         t1, t2 = seq_limits(seq_ends, k)
-        t1 > t2 && continue  # empty sequence
         hsmm.init .+= view(γ, :, t1)
         t2 < T && (total .+= ξ[t2])
     end

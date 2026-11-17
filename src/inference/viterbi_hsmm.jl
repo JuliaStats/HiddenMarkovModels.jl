@@ -44,6 +44,7 @@ function initialize_viterbi(
     seq_ends::AbstractVectorOrNTuple{Int},
     max_duration::Int=longest_sequence(seq_ends),
 )
+    check_seq_ends(seq_ends)
     @argcheck max_duration >= 1
     N, T = length(hsmm), length(obs_seq)
     R = eltype(hsmm, obs_seq[1], control_seq[1])
@@ -181,11 +182,6 @@ function _viterbi!(
     log_surv = storage.log_surv[k]
     incoming = storage.incoming[k]
     t1, t2 = seq_limits(seq_ends, k)
-    # An empty sequence has likelihood one, as in the HSMM forward pass.
-    if t1 > t2
-        logL[k] = zero(R)
-        return nothing
-    end
     N = length(hsmm)
     max_duration = sequence_max_duration(storage.max_duration, t1, t2)
     log_zero = convert(R, -Inf)

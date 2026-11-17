@@ -754,14 +754,19 @@ end
         end
     end
 
-    @testset "Empty subsequences" begin
+    @testset "Empty sequences are rejected" begin
         hsmm = rand_hsmm(StableRNG(5), 2)
-        obs_seq = randn(StableRNG(6), 5)
-        expected = logdensityof(hsmm, obs_seq)
-        @test logdensityof(hsmm, obs_seq; seq_ends=[0, 5]) ≈ expected
-        @test logdensityof(hsmm, obs_seq; seq_ends=[5, 5]) ≈ expected
-        @test logdensityof(hsmm, obs_seq; seq_ends=[2, 2, 5]) ≈
-            logdensityof(hsmm, obs_seq; seq_ends=[2, 5])
+        obs_seq, state_seq = randn(StableRNG(6), 5), [1, 1, 2, 2, 1]
+        for seq_ends in ([0, 5], [2, 2, 5], (5, 5))
+            @test_throws ArgumentError forward(hsmm, obs_seq; seq_ends)
+            @test_throws ArgumentError viterbi(hsmm, obs_seq; seq_ends)
+            @test_throws ArgumentError forward_backward(hsmm, obs_seq; seq_ends)
+            @test_throws ArgumentError logdensityof(hsmm, obs_seq; seq_ends)
+            @test_throws ArgumentError joint_logdensityof(
+                hsmm, obs_seq, state_seq; seq_ends
+            )
+            @test_throws ArgumentError baum_welch(hsmm, obs_seq; seq_ends)
+        end
     end
 
     @testset "ForwardDiff gradients with impossible terms" begin
@@ -1125,15 +1130,6 @@ end
         end
     end
 
-    @testset "Empty subsequences" begin
-        hsmm = rand_hsmm(StableRNG(5), 2)
-        obs_seq = randn(StableRNG(6), 5)
-        γ, logL = forward_backward(hsmm, obs_seq)
-        γ_empty, logL_empty = forward_backward(hsmm, obs_seq; seq_ends=[0, 5, 5])
-        @test γ_empty ≈ γ
-        @test logL_empty ≈ [0.0, only(logL), 0.0]
-    end
-
     @testset "Type promotion" begin
         hsmm32 = HSMM(
             Float32[0.6, 0.4],
@@ -1421,15 +1417,6 @@ end
         other_obs_seq = randn(rng, length(obs_seq))
         viterbi!(storage, hsmm, other_obs_seq, control_seq; seq_ends)
         @test (storage.q, storage.logL) == viterbi(hsmm, other_obs_seq; seq_ends)
-    end
-
-    @testset "Empty subsequences" begin
-        hsmm = rand_hsmm(StableRNG(5), 2)
-        obs_seq = randn(StableRNG(6), 5)
-        q, logL = viterbi(hsmm, obs_seq)
-        q_empty, logL_empty = viterbi(hsmm, obs_seq; seq_ends=[0, 5, 5])
-        @test q_empty == q
-        @test logL_empty ≈ [0.0, only(logL), 0.0]
     end
 
     @testset "Type promotion" begin
@@ -1740,21 +1727,6 @@ end
             succprob.(duration_distributions(hsmm_tup))
     end
 
-    @testset "Empty subsequences" begin
-        hsmm, obs_seq, seq_ends = two_state_problem()
-        hsmm_ref, logL_ref = baum_welch(hsmm, obs_seq; seq_ends, max_iterations=10)
-        for seq_ends in ([0, 30, 30, 31, 76, 96], (30, 31, 31, 76, 96, 96))
-            hsmm_empty, logL_empty = baum_welch(
-                hsmm, obs_seq; seq_ends, max_iterations=10, max_duration=45
-            )
-            @test logL_empty ≈ logL_ref
-            @test initialization(hsmm_empty) ≈ initialization(hsmm_ref)
-            @test transition_matrix(hsmm_empty) ≈ transition_matrix(hsmm_ref)
-            @test succprob.(duration_distributions(hsmm_empty)) ≈
-                succprob.(duration_distributions(hsmm_ref))
-        end
-    end
-
     @testset "Sparse transition matrix" begin
         trans = sparse([0.0 0.5 0.5; 1.0 0.0 0.0; 1.0 0.0 0.0])
         dists = [Normal(0.0), Normal(3.0), Normal(6.0)]
@@ -1900,17 +1872,6 @@ end
         )
         forward_backward!(storage, hsmm, obs_seq, control_seq; seq_ends)
         @test_throws ArgumentError fit!(hsmm, storage, obs_seq; seq_ends)
-    end
-
-    @testset "Trailing empty sequence" begin
-        # It shares its end with the last nonempty sequence, whose ξ holds the total.
-        hsmm = rand_hsmm(StableRNG(531), 3)
-        obs_seq = rand(StableRNG(532), hsmm, 30).obs_seq
-        hsmm_a, logL_a = baum_welch(hsmm, obs_seq; seq_ends=[10, 30], max_iterations=5)
-        hsmm_b, logL_b = baum_welch(hsmm, obs_seq; seq_ends=[10, 30, 30], max_iterations=5)
-        @test logL_a ≈ logL_b
-        @test transition_matrix(hsmm_a) ≈ transition_matrix(hsmm_b)
-        @test initialization(hsmm_a) ≈ initialization(hsmm_b)
     end
 
     @testset "Allocations" begin

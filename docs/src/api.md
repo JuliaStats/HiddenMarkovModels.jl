@@ -21,6 +21,8 @@ control_seq = reduce(vcat, control_seqs)
 seq_ends = cumsum(length.(obs_seqs))
 ```
 
+Every sequence must contain at least one observation, so drop empty ones from `obs_seqs` first.
+
 ## Types
 
 ```@docs
