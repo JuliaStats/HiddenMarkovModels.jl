@@ -18,6 +18,10 @@ instances = [
     # compare dists
     Instance(; nb_states=4, obs_dim=10, custom_dist=true),
     Instance(; nb_states=4, obs_dim=10, custom_dist=false),
+    # compare HSMM truncations, last so that the HMM instances keep their parameters
+    Instance(; nb_states=4, obs_dim=1, hsmm=true),
+    Instance(; nb_states=4, obs_dim=1, hsmm=true, max_duration=20),
+    Instance(; nb_states=16, obs_dim=1, hsmm=true, max_duration=20),
 ]
 
 SUITE = define_suite(rng; instances, algos)

@@ -2,7 +2,7 @@
 
 Tracks performance of `HiddenMarkovModels.jl`'s core algorithms (`forward`,
 `viterbi`, `forward_backward`, `baum_welch`) across a small fixed instance grid
-defined in [benchmarks.jl](benchmarks.jl).
+defined in [benchmarks.jl](benchmarks.jl), for HMMs and HSMMs.
 
 The CI workflow ([.github/workflows/benchmark.yml](../.github/workflows/benchmark.yml))
 runs on any PR tagged `run benchmark` and uses
