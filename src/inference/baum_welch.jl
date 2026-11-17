@@ -54,8 +54,9 @@ function baum_welch!(
 end
 
 function initialize_baum_welch(
-    hmm::AbstractHMM, obs_seq, control_seq; seq_ends, max_duration::Nothing
+    hmm::AbstractHMM, obs_seq, control_seq; seq_ends, max_duration
 )
+    @argcheck isnothing(max_duration) "`max_duration` only applies to HSMMs."
     return initialize_forward_backward(hmm, obs_seq, control_seq; seq_ends)
 end
 

@@ -1724,8 +1724,7 @@ end
             @test mean.(obs_distributions(hsmm_est)) ≈ mean.(obs_distributions(hsmm_ref))
             @test std.(obs_distributions(hsmm_est)) ≈ std.(obs_distributions(hsmm_ref))
         end
-        # `max_duration` only applies to HSMMs.
-        @test_throws MethodError baum_welch(hmm, randn(10); max_duration=5)
+        @test_throws ArgumentError baum_welch(hmm, randn(10); max_duration=5)
     end
 
     @testset "Multiple sequences of differing lengths" begin
