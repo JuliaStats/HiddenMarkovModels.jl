@@ -5,10 +5,11 @@ using InteractiveUtils: InteractiveUtils
 using BenchmarkTools: @benchmarkable, BenchmarkGroup
 using CSV: CSV
 using DataFrames: DataFrame
-using Distributions: Normal, MvNormal
+using Distributions: Normal, MvNormal, Poisson
 using HiddenMarkovModels
 using HiddenMarkovModels:
     LightDiagNormal,
+    initialize_baum_welch,
     rand_prob_vec,
     rand_trans_mat,
     initialize_viterbi,

@@ -2,8 +2,8 @@ struct HiddenMarkovModelsImplem <: Implementation end
 Base.string(::HiddenMarkovModelsImplem) = "HiddenMarkovModels.jl"
 
 function build_model(::HiddenMarkovModelsImplem, instance::Instance, params::Params)
-    (; custom_dist, nb_states, obs_dim) = instance
-    (; init, trans, means, stds) = params
+    (; custom_dist, nb_states, obs_dim, hsmm) = instance
+    (; init, trans, means, stds, dur_means) = params
 
     if obs_dim == 1
         dists = [Normal(means[1, i], stds[1, i]) for i in 1:nb_states]
@@ -13,7 +13,17 @@ function build_model(::HiddenMarkovModelsImplem, instance::Instance, params::Par
         dists = [MvNormal(means[:, i], Diagonal(stds[:, i])) for i in 1:nb_states]
     end
 
-    return HiddenMarkovModels.HMM(init, trans, dists)
+    if hsmm
+        return HiddenMarkovModels.HSMM(init, trans, dists, Poisson.(dur_means))
+    else
+        return HiddenMarkovModels.HMM(init, trans, dists)
+    end
+end
+
+# The `max_duration` keyword for an HSMM, nothing for an HMM.
+function duration_kwargs(instance::Instance)
+    (; hsmm, max_duration) = instance
+    return (hsmm && max_duration > 0) ? (; max_duration) : (;)
 end
 
 function _set_params!(b; samples, seconds)
@@ -45,6 +55,7 @@ function build_benchmarkables(
 
     benchs = Dict{String,Any}()
     set! = b -> _set_params!(b; samples=samples, seconds=seconds)
+    kw = duration_kwargs(instance)
 
     allocating = (
         ("forward", forward), ("viterbi", viterbi), ("forward_backward", forward_backward)
@@ -53,7 +64,8 @@ function build_benchmarkables(
         if name in algos
             benchs[name] = set!(
                 @benchmarkable(
-                    $fn($hmm, $obs_seq, $control_seq; seq_ends=($seq_ends)), evals = 1,
+                    $fn($hmm, $obs_seq, $control_seq; seq_ends=($seq_ends), $(kw)...),
+                    evals = 1,
                 )
             )
         end
@@ -71,7 +83,9 @@ function build_benchmarkables(
                     $fn(storage, $hmm, $obs_seq, $control_seq; seq_ends=($seq_ends)),
                     evals = 1,
                     setup = (
-                        storage = $init($hmm, $obs_seq, $control_seq; seq_ends=($seq_ends))
+                        storage = $init(
+                            $hmm, $obs_seq, $control_seq; seq_ends=($seq_ends), $(kw)...
+                        )
                     )
                 )
             )
@@ -89,6 +103,7 @@ function build_benchmarkables(
                     max_iterations=($bw_iter),
                     atol=(-Inf),
                     loglikelihood_increasing=false,
+                    $(kw)...,
                 ),
                 evals = 1,
             )
@@ -111,8 +126,12 @@ function build_benchmarkables(
                 evals = 1,
                 setup = (
                     hmm_guess = build_model($implem, $instance, $params);
-                    fb_storage = initialize_forward_backward(
-                        hmm_guess, $obs_seq, $control_seq; seq_ends=($seq_ends)
+                    fb_storage = initialize_baum_welch(
+                        hmm_guess,
+                        $obs_seq,
+                        $control_seq;
+                        seq_ends=($seq_ends),
+                        max_duration=$(get(kw, :max_duration, nothing)),
                     );
                     logL_evolution = Float64[];
                     sizehint!(logL_evolution, $bw_iter)

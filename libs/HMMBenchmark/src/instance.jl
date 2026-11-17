@@ -6,6 +6,8 @@ Base.@kwdef struct Instance
     bw_iter::Int = 1
     sparse::Bool = false
     custom_dist::Bool = false
+    hsmm::Bool = false
+    max_duration::Int = 0  # HSMM only, 0 means the sequence length
 end
 
 function Base.string(c::Instance)
