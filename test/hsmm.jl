@@ -31,6 +31,7 @@ using Random: AbstractRNG
 using SparseArrays: SparseMatrixCSC, nnz, sparse
 using StableRNGs: StableRNG
 using Test
+using Zygote: Zygote
 
 @testset "HSMM type" begin
     init = [0.6, 0.4]
@@ -805,6 +806,37 @@ end
         g = ForwardDiff.gradient(f_obs, [0.4, 0.3])
         @test all(isfinite, g)
         @test g ≈ fd_gradient(f_obs, [0.4, 0.3]) rtol = 1e-5
+    end
+
+    @testset "Zygote gradients" begin
+        function build(θ)
+            init = [θ[1], θ[2], 1 - θ[1] - θ[2]]
+            trans = [0 θ[3] 1-θ[3]; θ[4] 0 1-θ[4]; θ[5] 1-θ[5] 0]
+            dists = [Normal(θ[6]), Normal(θ[7]), Normal(θ[8])]
+            return HSMM(init, trans, dists, Geometric.(θ[9:11]))
+        end
+        θ = [0.5, 0.3, 0.6, 0.4, 0.7, -2.0, 0.0, 2.0, 0.3, 0.2, 0.5]
+        obs_seq = rand(StableRNG(1), build(θ), 60).obs_seq
+        for kwargs in (
+            (;),
+            (; seq_ends=[20, 21, 45, 60]),
+            (; seq_ends=[20, 21, 45, 60], max_duration=5),
+        )
+            f(θ) = logdensityof(build(θ), obs_seq; kwargs...)
+            @test only(Zygote.gradient(f, θ)) ≈ ForwardDiff.gradient(f, θ)
+        end
+
+        # At a zero initial probability, the derivative is one-sided.
+        θ0 = [θ[1]; 0.0; θ[3:end]]
+        f0(θ) = logdensityof(build(θ), obs_seq)
+        h = 1e-7
+        one_sided = (f0(θ0 + h * (1:11 .== 2)) - f0(θ0)) / h
+        @test only(Zygote.gradient(f0, θ0))[2] ≈ one_sided rtol = 1e-5
+
+        # The duration counts are summed over all start times.
+        @test_throws ArgumentError Zygote.gradient(
+            θ -> logdensityof(build(θ), obs_seq, collect(1:60)), θ
+        )
     end
 
     @testset "Allocations" begin

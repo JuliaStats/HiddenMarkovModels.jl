@@ -130,6 +130,7 @@ These values will serve as ground truth when we compare with reverse mode.
 #=
 In the presence of many parameters, reverse mode automatic differentiation of the loglikelihood will be much more efficient.
 The package includes a handwritten chain rule for `logdensityof`, which means backends like [Zygote.jl](https://github.com/FluxML/Zygote.jl) can be used out of the box.
+The rule also covers HSMMs, as long as the controls are constant.
 Using it, we can compute all derivatives at once.
 =#
 
