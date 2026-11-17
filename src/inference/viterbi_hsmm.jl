@@ -142,7 +142,6 @@ function extend_best_segments!(;
     log_dur::AbstractMatrix{R},
     log_surv::AbstractMatrix{R},
     s::Integer,
-    t1::Integer,
     t2::Integer,
     max_duration::Integer,
 ) where {R}
@@ -210,7 +209,6 @@ function _viterbi!(
         log_dur,
         log_surv,
         s=t1,
-        t1,
         t2,
         max_duration=support,
     )
@@ -230,7 +228,6 @@ function _viterbi!(
                 log_dur,
                 log_surv,
                 s,
-                t1,
                 t2,
                 max_duration=support,
             )
@@ -266,7 +263,6 @@ function _viterbi!(
                 log_dur,
                 log_surv,
                 s,
-                t1,
                 t2,
                 max_duration=support,
             )

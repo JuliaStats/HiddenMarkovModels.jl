@@ -190,9 +190,7 @@ function accumulate_incoming!(
     return reachable
 end
 
-#= Extend the paths entering each state `j` at `t + 1` by a sojourn covering `(t + 1):(t + d)`.
-Summing the observations as the segment grows costs O(1) per segment, like prefix sums, without
-their loss of precision after a very small `b[j,u]`. =#
+# Extend the paths entering each state `j` at `t + 1` by a sojourn covering `(t + 1):(t + d)`.
 function extend_segments!(;
     log_ends::AbstractMatrix{R},
     log_ongoing::AbstractMatrix{R},

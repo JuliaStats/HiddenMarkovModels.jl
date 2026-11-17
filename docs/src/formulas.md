@@ -231,7 +231,8 @@ F_{j,t} & = \mathbb{P}(Y_{1:t}, X_t=j, \text{the sojourn in } j \text{ covers } 
 \end{align*}
 ```
 
-Only $E$ can be closed under transitions, since a jump requires a completed sojourn, but $F$ is the quantity of interest because the sojourn covering $t$ is right-censored.
+Transitions only start from $E$, since a jump requires a completed sojourn.
+The filtered marginals use $F$ instead, since the sojourn covering $t$ may still be running.
 Denoting by
 
 ```math
@@ -248,8 +249,7 @@ F_{j,t} & = \pi_j \left(\prod_{u=1}^{t} b_{j,u}\right) S_j(t) + \sum_{s=1}^{t-1}
 ```
 
 where the first term accounts for the segment starting the sequence.
-Unlike the vanilla forward pass, this recursion is carried out in the log domain instead of being scaled.
-Each $F_{j,t}$ mixes segments with different starting times, and hence different products of observation likelihoods, so working with log-probabilities is simpler than tracking scaling factors across all of them.
+This recursion runs in the log domain instead of being scaled as in the vanilla case, because each $F_{j,t}$ sums segments with different start times, which would each need their own scaling factor.
 
 ### Likelihood and marginals
 
@@ -276,9 +276,9 @@ Once $b_{j,u} = 0$, every longer segment containing $u$ is impossible, so the en
 
 ### Truncation and complexity
 
-By default, $D$ is the length of the longest sequence, the constraint $d \leq D$ is vacuous and the result is exact.
-For $D < T$, every path containing a sojourn longer than $D$ is dropped, including the right-censored final one,, so $\mathcal{L}$ is underestimated and the marginals $\bar{\alpha}$ are biased.
-Note that the convention $S_j(d) = 0$ for $d > D$ only stops the enumeration of longer segments: a segment running for $d \leq D$ timesteps still carries the full mass $\mathbb{P}(D_j \geq d)$ of all longer sojourns.
+By default, $D$ is the length of the longest sequence, so no sojourn can be longer than $D$ and the result is exact.
+For $D < T$, every path with a segment spanning more than $D$ timesteps is dropped, whether that sojourn is completed or right-censored, so $\mathcal{L}$ is underestimated and the marginals $\bar{\alpha}$ are biased.
+Truncation does not renormalize the durations: a segment that has lasted $d \leq D$ timesteps keeps the full survival probability $\mathbb{P}(D_j \geq d)$, including sojourns longer than $D$.
 
 The cost is $O(N^2 T)$ for the transitions plus $O(N T D)$ for the segments, with $O(N T)$ memory.
 With the default $D$, this means $O(N T^2)$, so a smaller $D$ is advisable for long sequences.
@@ -329,11 +329,11 @@ The one-state marginals add up the sojourns covering $t$, and the two-state marg
 \end{align*}
 ```
 
-The inner sum in $\gamma$ is a tail sum over durations, which we accumulate from the longest duration down.
-This costs $O(N T D)$ like the recursion itself, and unlike the alternative $\gamma_{j,t+1} = \gamma_{j,t} + \sum_{i \neq j} \xi_{i,j,t} - \sum_{k \neq j} \xi_{j,k,t}$ it never subtracts probabilities.
-The identity still holds and serves as a consistency check.
+The inner sum in $\gamma$ is a tail sum over durations, accumulated from the longest duration down in $O(N T D)$, like the recursion.
+The identity $\gamma_{j,t+1} = \gamma_{j,t} + \sum_{i \neq j} \xi_{i,j,t} - \sum_{k \neq j} \xi_{j,k,t}$ would avoid it, but it subtracts probabilities, so it only serves as a consistency check.
 
-Everything is computed during a single backward sweep over $s$, in the log domain: when the sweep reaches $s$, the variables $G_{\cdot, s:T}$ are already known, so $H_{\cdot, s}$, the weights $w_{\cdot,s,\cdot}$ and then $G_{\cdot, s-1}$ and $\xi_{\cdot,\cdot,s-1}$ follow.
+Everything is computed in the log domain during a single backward sweep over $s$.
+When the sweep reaches $s$, $G_{\cdot, s:T}$ is already known, which gives $H_{\cdot, s}$ and $w_{\cdot,s,\cdot}$, then $G_{\cdot, s-1}$ and $\xi_{\cdot,\cdot,s-1}$.
 
 ### Expected duration counts
 
@@ -348,7 +348,7 @@ Refitting the sojourn distributions requires the expected number of sojourns of 
 
 Since each $w_{j,s,d}$ is computed exactly once during the backward sweep, both are accumulated on the fly with $O(N D)$ memory per sequence, instead of storing all the $O(N T D)$ weights.
 With several sequences, the counts of each sequence use its own length $T$ and are summed.
-With $D < T$, only the durations $d \leq D$ are counted, like in the recursion.
+With $D < T$, only the durations $d \leq D$ are counted, as in the recursion.
 They satisfy the following identities, since every timestep belongs to exactly one sojourn, every completed sojourn is followed by a transition, and every sequence ends with exactly one censored sojourn:
 
 ```math
@@ -358,11 +358,13 @@ They satisfy the following identities, since every timestep belongs to exactly o
 ## Explicit-duration HSMM Viterbi
 
 The Viterbi algorithm replaces the sums of the forward pass with maximizations.
-Since consecutive sojourns are in different states, a sequence of segments determines the state sequence and vice versa, so maximizing over segmentations maximizes the joint likelihood $\mathbb{P}(X_{1:T}, Y_{1:T})$, in which the final segment is right-censored.
+Consecutive sojourns are in different states, so a segmentation and a state sequence determine each other.
+Maximizing over segmentations therefore maximizes the joint likelihood $\mathbb{P}(X_{1:T}, Y_{1:T})$, whose final segment is right-censored.
 
 ### Recursion
 
-With the convention $I^*_{j,0} = \pi_j$, as in the forward-backward marginals, the best path whose sojourn in $j$ ends at $t$, and the best path entering $j$ at $t+1$, satisfy
+Let $E^*_{j,t}$ be the best path whose sojourn in $j$ ends at $t$, and $I^*_{j,t}$ the best path entering $j$ at $t+1$, with $I^*_{j,0} = \pi_j$.
+They satisfy
 
 ```math
 \begin{align*}
@@ -380,7 +382,8 @@ As in the forward pass, the recursion is carried out in the log domain, with the
 ### Truncation
 
 With $D < T$, the maximum over $s$ is restricted to $t - D + 1 \leq s \leq t$, so only state sequences whose sojourns all last at most $D$ timesteps are considered.
-Unlike the forward pass, nothing is underestimated: the result is the most likely of these state sequences, together with its exact joint loglikelihood, since $S_j(d)$ is never truncated for $d \leq D$.
+Unlike the forward pass, this underestimates nothing.
+The result is the most likely of these state sequences with its exact joint loglikelihood, since $S_j(d)$ is not truncated for $d \leq D$.
 
 ## Explicit-duration HSMM Baum-Welch
 
@@ -399,7 +402,7 @@ Since $\xi_{j,j,t} = 0$, the diagonal of $\hat{a}$ remains zero.
 A state that is never left, for instance one seen only in right-censored final sojourns, carries no information about its transitions or its duration: these are left unchanged instead of being set to $0 / 0$ or to an infinite mean.
 Likewise, a state that is never visited keeps its observation distribution.
 
-Here $\xi$ only counts the ends of sojourns, so the durations are fitted separately from the expected sojourn lengths, as follows.
+$\xi$ only counts the ends of sojourns, not their lengths, so the durations are fitted separately, from the expected duration counts.
 
 ### Durations
 
@@ -421,7 +424,7 @@ In the geometric case $p_j(d) = q_j (1-q_j)^{d-1}$ and $S_j(d) = (1-q_j)^{d-1}$,
 \hat{q}_j = \frac{\sum_d \eta_{j,d}}{\sum_d d \, \eta_{j,d} + \sum_d (d-1) \, \zeta_{j,d}}
 ```
 
-which is exactly the vanilla update $1 - \hat{a}_{j,j}$ of the equivalent HMM, whose self-transitions also cover the censored sojourn except for its last step.
+This is exactly $1 - \hat{a}_{j,j}$ in the equivalent HMM, where a censored sojourn of length $d$ contributes $d - 1$ self-transitions and no exit.
 
 If state $j$ has no completed sojourn, i.e. $\sum_d \eta_{j,d} = 0$, it was only seen in censored final sojourns, so the data give no upper bound on its durations.
 Then $Q_j$ increases towards an infinite mean ($q_j \to 0$ in the geometric case), which no distribution attains.
@@ -435,7 +438,7 @@ Under the current parameters $\theta_j^{\text{old}}$, a sojourn known to last at
 ```
 
 with equality at $\theta_j = \theta_j^{\text{old}}$.
-Plugging this bound into $Q_j$, maximizing it amounts to a weighted fit of the duration distribution on the values $d - 1$ (recall that the distribution supplied by the user models the sojourn length minus one) with the weights
+Since the distribution supplied by the user models the sojourn length minus one, plugging this bound into $Q_j$ turns its maximization into a weighted fit on the values $d - 1$, with the weights
 
 ```math
 \tilde{\eta}_{j,d'} = \eta_{j,d'} + p_j(d'; \theta_j^{\text{old}}) \sum_{d \leq d'} \frac{\zeta_{j,d}}{S_j(d; \theta_j^{\text{old}})}
@@ -443,7 +446,7 @@ Plugging this bound into $Q_j$, maximizing it amounts to a weighted fit of the d
 
 and since the bound is tight at $\theta_j^{\text{old}}$, this cannot decrease $Q_j$.
 Therefore the loglikelihood of Baum-Welch still never decreases.
-The weights extend beyond the longest sojourn, until the imputed mass left, $S_j(d'+1; \theta_j^{\text{old}}) \sum_{d} \zeta_{j,d} / S_j(d; \theta_j^{\text{old}})$, falls below the machine precision relative to the total weight, or the support of $p_j$ ends.
+The weights extend past the longest observed sojourn, until the support of $p_j$ ends or the remaining imputed mass, $S_j(d'+1; \theta_j^{\text{old}}) \sum_{d} \zeta_{j,d} / S_j(d; \theta_j^{\text{old}})$, falls below machine precision relative to the total weight.
 
 ## Bibliography
 
