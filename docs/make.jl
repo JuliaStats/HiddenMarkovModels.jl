@@ -50,6 +50,7 @@ pages = [
         joinpath("examples", "temporal.md"),
         joinpath("examples", "controlled.md"),
         joinpath("examples", "autoregression.md"),
+        joinpath("examples", "hsmm.md"),
         joinpath("examples", "autodiff.md"),
         joinpath("examples", "gradientdescent.md"),
     ],
