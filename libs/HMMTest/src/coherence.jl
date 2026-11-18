@@ -2,8 +2,8 @@ infnorm(x) = maximum(abs, x)
 infapprox(x, y; atol::Real) = infnorm(x .- y) <= atol
 
 function test_equal_hmms(
-    hmm1::AbstractHMM,
-    hmm2::AbstractHMM,
+    hmm1::AbstractLatentStateModel,
+    hmm2::AbstractLatentStateModel,
     control_seq::AbstractVector;
     atol::Real,
     init::Bool,
@@ -56,15 +56,30 @@ function test_equal_hmms(
         end
     end
 
+    if hmm1 isa AbstractHSMM
+        # The log of the mean sojourn length, so that `atol` acts as a relative tolerance.
+        log_sojourn(hsmm, control) = log.(1 .+ mean.(duration_distributions(hsmm, control)))
+        @testset "Duration distributions" begin
+            @testset "Control $control" for control in control_seq
+                l1, l2 = log_sojourn(hmm1, control), log_sojourn(hmm2, control)
+                if flip
+                    @test !infapprox(l1, l2; atol)
+                else
+                    @test infapprox(l1, l2; atol)
+                end
+            end
+        end
+    end
+
     return nothing
 end
 
 function test_coherent_algorithms(
     rng::AbstractRNG,
-    hmm::AbstractHMM,
+    hmm::AbstractLatentStateModel,
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
-    hmm_guess::Union{Nothing,AbstractHMM}=nothing,
+    hmm_guess::Union{Nothing,AbstractLatentStateModel}=nothing,
     atol::Real=0.05,
     init::Bool=true,
 )

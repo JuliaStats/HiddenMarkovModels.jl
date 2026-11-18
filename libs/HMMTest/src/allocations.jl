@@ -1,10 +1,10 @@
 
 function test_allocations(
     rng::AbstractRNG,
-    hmm::AbstractHMM,
+    hmm::AbstractLatentStateModel,
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
-    hmm_guess::Union{Nothing,AbstractHMM}=nothing,
+    hmm_guess::Union{Nothing,AbstractLatentStateModel}=nothing,
 )
     # making seq_ends a tuple disables multithreading
     seq_ends = ntuple(k -> seq_ends[k], Val(min(1, length(seq_ends))))
@@ -45,8 +45,9 @@ function test_allocations(
         ## Baum-Welch
 
         if !isnothing(hmm_guess)
-            fb_storage = HMMs.initialize_forward_backward(
-                hmm_guess, obs_seq, control_seq; seq_ends
+            # An HSMM also needs the duration counts.
+            fb_storage = HMMs.initialize_baum_welch(
+                hmm_guess, obs_seq, control_seq; seq_ends, max_duration=nothing
             )
             HMMs.forward_backward!(fb_storage, hmm, obs_seq, control_seq; seq_ends)
             allocs_bw = @ballocated fit!(

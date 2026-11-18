@@ -266,3 +266,94 @@ if TEST_SUITE != "HMMBase"
         )
     end
 end
+
+## HSMMs
+
+# Three states, since two leave no choice of transitions, and shorter sequences, since the cost
+# grows with the square of their length.
+init3 = [0.5, 0.3, 0.2]
+init3_guess = fill(1 / 3, 3)
+
+trans3 = [0.0 0.7 0.3; 0.4 0.0 0.6; 0.5 0.5 0.0]
+trans3_guess = [0.0 0.5 0.5; 0.5 0.0 0.5; 0.5 0.5 0.0]
+
+control_seqs_hsmm = [fill(nothing, rand(rng, 50:100)) for k in 1:K];
+control_seq_hsmm = reduce(vcat, control_seqs_hsmm);
+seq_ends_hsmm = cumsum(length.(control_seqs_hsmm));
+
+if TEST_SUITE != "HMMBase"
+    @testset verbose = true "HSMM - Normal and Poisson" begin
+        dists = [Normal(-5.0), Normal(0.0), Normal(5.0)]
+        dists_guess = [Normal(-4.0), Normal(0.5), Normal(4.0)]
+        durs = [Poisson(4.0), Poisson(1.0), Poisson(7.0)]
+        durs_guess = [Poisson(2.0), Poisson(2.0), Poisson(2.0)]
+
+        hsmm = HSMM(init3, trans3, dists, durs)
+        hsmm_guess = HSMM(init3_guess, trans3_guess, dists_guess, durs_guess)
+
+        rng = StableRNG(63)
+        test_coherent_algorithms(
+            rng,
+            hsmm,
+            control_seq_hsmm;
+            seq_ends=seq_ends_hsmm,
+            hmm_guess=hsmm_guess,
+            init=false,
+        )
+        test_type_stability(
+            rng, hsmm, control_seq_hsmm; seq_ends=seq_ends_hsmm, hmm_guess=hsmm_guess
+        )
+    end
+
+    @testset verbose = true "HSMM - LightDiagNormal and Geometric" begin
+        dists = [LightDiagNormal(fill(m, 2), σ) for m in (-5.0, 0.0, 5.0)]
+        dists_guess = [LightDiagNormal(fill(m, 2), σ) for m in (-4.0, 0.5, 4.0)]
+        durs = [Geometric(0.2), Geometric(0.5), Geometric(0.1)]
+        durs_guess = [Geometric(0.3), Geometric(0.3), Geometric(0.3)]
+
+        hsmm = HSMM(init3, trans3, dists, durs)
+        hsmm_guess = HSMM(init3_guess, trans3_guess, dists_guess, durs_guess)
+
+        rng = StableRNG(63)
+        test_coherent_algorithms(
+            rng,
+            hsmm,
+            control_seq_hsmm;
+            seq_ends=seq_ends_hsmm,
+            hmm_guess=hsmm_guess,
+            init=false,
+        )
+        test_type_stability(
+            rng, hsmm, control_seq_hsmm; seq_ends=seq_ends_hsmm, hmm_guess=hsmm_guess
+        )
+        test_allocations(
+            rng, hsmm, control_seq_hsmm; seq_ends=seq_ends_hsmm, hmm_guess=hsmm_guess
+        )
+    end
+
+    @testset verbose = true "HSMM - Normal and Geometric (sparse)" begin
+        dists = [Normal(-5.0), Normal(0.0), Normal(5.0)]
+        dists_guess = [Normal(-4.0), Normal(0.5), Normal(4.0)]
+        durs = [Geometric(0.2), Geometric(0.5), Geometric(0.1)]
+        durs_guess = [Geometric(0.3), Geometric(0.3), Geometric(0.3)]
+
+        hsmm = HSMM(init3, sparse(trans3), dists, durs)
+        hsmm_guess = HSMM(init3_guess, sparse(trans3_guess), dists_guess, durs_guess)
+
+        rng = StableRNG(63)
+        test_coherent_algorithms(
+            rng,
+            hsmm,
+            control_seq_hsmm;
+            seq_ends=seq_ends_hsmm,
+            hmm_guess=hsmm_guess,
+            init=false,
+        )
+        test_type_stability(
+            rng, hsmm, control_seq_hsmm; seq_ends=seq_ends_hsmm, hmm_guess=hsmm_guess
+        )
+        @test_skip test_allocations(
+            rng, hsmm, control_seq_hsmm; seq_ends=seq_ends_hsmm, hmm_guess=hsmm_guess
+        )
+    end
+end

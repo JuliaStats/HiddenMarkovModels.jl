@@ -1,10 +1,10 @@
 
 function test_type_stability(
     rng::AbstractRNG,
-    hmm::AbstractHMM,
+    hmm::AbstractLatentStateModel,
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
-    hmm_guess::Union{Nothing,AbstractHMM}=nothing,
+    hmm_guess::Union{Nothing,AbstractLatentStateModel}=nothing,
 )
     @testset "Type stability" begin
         state_seq, obs_seq = rand(rng, hmm, control_seq)
@@ -16,11 +16,11 @@ function test_type_stability(
         @test_call target_modules = (HMMs,) logdensityof(
             hmm, obs_seq, control_seq; seq_ends
         )
-        @test_opt target_modules = (HMMs,) logdensityof(
-            hmm, obs_seq, state_seq; control_seq, seq_ends
+        @test_opt target_modules = (HMMs,) joint_logdensityof(
+            hmm, obs_seq, state_seq, control_seq; seq_ends
         )
-        @test_call target_modules = (HMMs,) logdensityof(
-            hmm, obs_seq, state_seq; control_seq, seq_ends
+        @test_call target_modules = (HMMs,) joint_logdensityof(
+            hmm, obs_seq, state_seq, control_seq; seq_ends
         )
 
         @test_opt target_modules = (HMMs,) forward(hmm, obs_seq, control_seq; seq_ends)
