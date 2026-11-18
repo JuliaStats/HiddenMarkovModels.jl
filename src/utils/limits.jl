@@ -14,7 +14,7 @@ end
 function check_seq_ends(seq_ends::AbstractVectorOrNTuple{Int})
     for k in eachindex(seq_ends)
         t1, t2 = seq_limits(seq_ends, k)
-        @argcheck t1 <= t2 "Sequence $k is empty, remove it from `seq_ends`."
+        @argcheck t1 <= t2 "Sequence $k is empty, remove it from `seq_ends` and `obs_seq`."
     end
     return nothing
 end
