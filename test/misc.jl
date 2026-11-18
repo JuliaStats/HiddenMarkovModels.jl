@@ -18,6 +18,19 @@ function thrown_error(f)
     end
 end
 
+@testset "Empty sequences are rejected" begin
+    hmm = HMM(rand_prob_vec(2), rand_trans_mat(2), [Normal(0.0), Normal(3.0)])
+    obs_seq, state_seq = rand(5), rand(1:2, 5)
+    for seq_ends in ([0, 5], [2, 2, 5], (5, 5))
+        @test_throws ArgumentError forward(hmm, obs_seq; seq_ends)
+        @test_throws ArgumentError viterbi(hmm, obs_seq; seq_ends)
+        @test_throws ArgumentError forward_backward(hmm, obs_seq; seq_ends)
+        @test_throws ArgumentError logdensityof(hmm, obs_seq; seq_ends)
+        @test_throws ArgumentError joint_logdensityof(hmm, obs_seq, state_seq; seq_ends)
+        @test_throws ArgumentError baum_welch(hmm, obs_seq; seq_ends)
+    end
+end
+
 @testset "Allow NaN density" begin
     init = rand_prob_vec(2)
     trans = rand_trans_mat(2)

@@ -314,7 +314,6 @@ function _forward_backward!(
 
     # Forward (fill log_obs, log_ends and logL)
     _forward!(forward, hsmm, obs_seq, control_seq, seq_ends, k; error_if_not_finite=true)
-    t1 > t2 && return nothing
 
     (; log_ends) = forward
     log_dur, log_surv = forward.log_dur[k], forward.log_surv[k]

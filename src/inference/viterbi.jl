@@ -26,6 +26,7 @@ function initialize_viterbi(
     control_seq::AbstractVector;
     seq_ends::AbstractVectorOrNTuple{Int},
 )
+    check_seq_ends(seq_ends)
     N, T, K = length(hmm), length(obs_seq), length(seq_ends)
     R = eltype(hmm, obs_seq[1], control_seq[1])
     q = Vector{Int}(undef, T)

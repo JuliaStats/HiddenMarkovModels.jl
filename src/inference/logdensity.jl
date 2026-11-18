@@ -47,6 +47,7 @@ function joint_logdensityof(
     control_seq::AbstractVector=Fill(nothing, length(obs_seq));
     seq_ends::AbstractVectorOrNTuple{Int}=(length(obs_seq),),
 )
+    check_seq_ends(seq_ends)
     R = eltype(hmm, obs_seq[1], control_seq[1])
     logL = zero(R)
     for k in eachindex(seq_ends)
@@ -87,6 +88,7 @@ function joint_logdensityof(
     control_seq::AbstractVector=Fill(nothing, length(obs_seq));
     seq_ends::AbstractVectorOrNTuple{Int}=(length(obs_seq),),
 )
+    check_seq_ends(seq_ends)
     R = eltype(hsmm, obs_seq[1], control_seq[1])
     logL = zero(R)
     for k in eachindex(seq_ends)

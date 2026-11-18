@@ -8,6 +8,7 @@ function initialize_forward_backward(
     seq_ends::AbstractVectorOrNTuple{Int},
     transition_marginals=true,
 )
+    check_seq_ends(seq_ends)
     N, T, K = length(hmm), length(obs_seq), length(seq_ends)
     R = eltype(hmm, obs_seq[1], control_seq[1])
     trans = transition_matrix(hmm, control_seq[1])
@@ -134,7 +135,6 @@ function sum_transition_marginals!(ξ::AbstractVector, seq_ends::AbstractVectorO
 end
 
 function _sum_transition_marginals!(ξ::AbstractVector, t1::Integer, t2::Integer)
-    t1 > t2 && return nothing  # an empty sequence has no ξ[t2] of its own
     scratch = ξ[t2]
     fill!(scratch, zero(eltype(scratch)))
     for t in t1:(t2 - 1)
