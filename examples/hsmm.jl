@@ -161,6 +161,6 @@ With `Geometric` durations, an HSMM is equivalent to an HMM, so you only need an
 @test all(>=(0), diff(loglikelihood_evolution))  #src
 @test logdensityof(hsmm, obs_seq; max_duration=3) < logdensityof(hsmm, obs_seq)  #src
 @test all(  #src
-    isapprox.(mean.(duration_distributions(hsmm_est)), mean.(dur_dists); rtol=0.1)  #src
+    isapprox.(mean.(duration_distributions(hsmm_est)), mean.(dur_dists); rtol=0.1),  #src
 )  #src
 @test all(isapprox.(transition_matrix(hsmm_est), transition_matrix(hsmm); atol=0.1))  #src
