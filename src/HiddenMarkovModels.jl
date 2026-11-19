@@ -1,7 +1,7 @@
 """
     HiddenMarkovModels
 
-A Julia package for HMM modeling, simulation, inference and learning.
+A Julia package for HMM and HSMM modeling, simulation, inference and learning.
 
 # Exports
 

@@ -60,6 +60,7 @@ This package is **generic**.
 Observations can be arbitrary Julia objects, not just scalars or arrays.
 Number types are not restricted to floating point, which enables automatic differentiation.
 Time-dependent or controlled HMMs are supported out of the box.
+Hidden semi-Markov models, whose states last for an explicit random duration, are supported as well.
 
 This package is **fast**.
 All the inference functions have allocation-free versions, which leverage efficient linear algebra subroutines.

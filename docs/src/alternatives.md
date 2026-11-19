@@ -20,6 +20,7 @@ There are also more generic packages for probabilistic programming, which are ab
 | Multiple sequences        | yes                   | no               | yes             |
 | Priors / structures       | possible              | no               | possible        |
 | Control dependency        | yes                   | no               | no              |
+| Semi-Markov (HSMM)        | yes                   | no               | no              |
 | Automatic differentiation | yes                   | no               | yes             |
 | Linear algebra speedup    | yes                   | yes              | no              |
 | Numerical stability       | scaling+              | scaling+         | log             |
@@ -30,6 +31,7 @@ There are also more generic packages for probabilistic programming, which are ab
     There are two main solutions for this problem: scaling and logarithmic computations.
     This package implements the Viterbi algorithm in log scale, but the other algorithms use scaling to exploit BLAS operations.
     As was done in HMMBase.jl, we enhance scaling with a division by the highest observation loglikelihood: instead of working with $b_{i,t} = \mathbb{P}(Y_t | X_t = i)$, we use $b_{i,t} / \max_i b_{i,t}$.
+    The HSMM algorithms work in log scale throughout.
     See [Formulas](@ref) for details.
 
 ## Python
