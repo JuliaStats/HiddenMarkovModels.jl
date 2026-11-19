@@ -33,19 +33,6 @@ DensityInterface.logdensityof(::ConstDuration, x) = iszero(x) ? 0.0 : -Inf
 Base.rand(::AbstractRNG, ::ConstDuration{T}) where {T} = zero(T)
 HiddenMarkovModels.duration_logsurvival(::ConstDuration, k::Integer) = k <= 1 ? 0.0 : -Inf
 
-# Wraps a `Distributions` law without being one, so it must supply its own survival function.
-# It uses the two-line summation suggested in the `duration_logsurvival` docstring.
-struct DuckDuration{D}
-    dist::D
-end
-DensityInterface.DensityKind(::DuckDuration) = HasDensity()
-DensityInterface.logdensityof(d::DuckDuration, x) = logdensityof(d.dist, x)
-Base.rand(rng::AbstractRNG, d::DuckDuration) = rand(rng, d.dist)
-function HiddenMarkovModels.duration_logsurvival(d::DuckDuration, k::Integer)
-    k <= 1 && return 0.0
-    return log1p(-sum(exp(duration_logdensityof(d, j)) for j in 1:(k - 1)))
-end
-
 # Implements the density but forgets the survival function.
 struct ForgetfulDuration end
 DensityInterface.DensityKind(::ForgetfulDuration) = HasDensity()
