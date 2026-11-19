@@ -85,7 +85,10 @@ end
         end
 
         @testset verbose = true "HSMM" begin
-            include("hsmm.jl")
+            include(joinpath("hsmm", "utils.jl"))
+            @testset verbose = true "$file" for file in ("types", "inference", "learning")
+                include(joinpath("hsmm", "$file.jl"))
+            end
         end
     end
 end
